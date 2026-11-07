@@ -73,9 +73,74 @@ const MUSCLE_RULES = [
 // Käyttäjän oma valinta (data.muscles) menee arvauksen edelle
 function muscleOf(name) {
   if (data.muscles && data.muscles[name]) return data.muscles[name];
+  const lib = LIBRARY.find(x => x[0] === name); // kirjaston liikkeillä lihasryhmä on tiedossa
+  if (lib) return lib[1];
   const n = name.toLowerCase();
   const hit = MUSCLE_RULES.find(([re]) => re.test(n));
   return hit ? hit[1] : 'Muut';
+}
+
+// ---------- Liikehaku ----------
+// Poistaa isot kirjaimet ja ääkköset (ä -> a, ö -> o), jotta "ylatalja" löytää "Ylätalja"
+const norm = s => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[-‐]/g, ' ').trim();
+
+// Hakuehdokkaat: kirjasto + omat liikkeet (historiasta ja pohjista), ilman päällekkäisyyksiä
+function candidates() {
+  const seen = new Set(LIBRARY.map(x => norm(x[0])));
+  const own = knownExercises().filter(n => !seen.has(norm(n))).map(n => [n, muscleOf(n), '']);
+  return [...LIBRARY, ...own];
+}
+
+// Palauttaa osumat paremmuusjärjestyksessä: nimen alku ensin, sitten sanan alku, sitten muu osuma
+function searchExercises(query, limit = 8) {
+  const q = norm(query);
+  if (!q) return [];
+  const tokens = q.split(/\s+/);
+  const res = [];
+  candidates().forEach(([name, muscle, alias], idx) => {
+    const n = norm(name), a = norm(alias), hay = n + ' ' + a;
+    if (!tokens.every(t => hay.includes(t))) return;
+    let score = 3;                                            // osuma vain jossain päin hakusanoja
+    if (n.startsWith(q)) score = 0;                           // nimi alkaa haulla
+    else if ((n + ' ' + a).split(' ').some(w => w.startsWith(tokens[0]))) score = 1; // jokin sana alkaa haulla
+    else if (tokens.every(t => n.includes(t))) score = 2;
+    res.push({ name, muscle, score, idx });
+  });
+  // Samalla pistemäärällä kirjaston oma järjestys (yleisimmät liikkeet ensin)
+  return res.sort((a, b) => a.score - b.score || a.idx - b.idx).slice(0, limit);
+}
+
+// Jos kirjoitettu nimi täsmää kirjaston tai omiin liikkeisiin, käytetään sen virallista kirjoitusasua
+// (näin "penkkipunnerrus" ja "Penkkipunnerrus" eivät jakaudu kahdeksi liikkeeksi historiassa)
+function resolveName(typed) {
+  const t = typed.trim();
+  const hit = candidates().find(c => norm(c[0]) === norm(t));
+  return hit ? hit[0] : t;
+}
+
+// Piirtää ehdotuslistan syöttökentän alle. ctx = 'workout' tai 'template'
+function showSuggest(input) {
+  const ctx = input.dataset.suggest;
+  const box = document.getElementById('sugg-' + ctx);
+  if (!box) return;
+  const typed = input.value.trim();
+  const items = searchExercises(typed);
+  const exact = typed && norm(resolveName(typed)) === norm(typed) && candidates().some(c => norm(c[0]) === norm(typed));
+  box.innerHTML = items.map(i => `<button class="sg" data-act="pick-ex" data-ctx="${ctx}" data-name="${esc(i.name)}">
+      <span>${esc(i.name)}</span><span class="muted">${esc(i.muscle)}</span></button>`).join('')
+    + (typed && !exact ? `<button class="sg new" data-act="pick-ex" data-ctx="${ctx}" data-name="${esc(typed)}">+ Lisää "${esc(typed)}" omana liikkeenä</button>` : '');
+}
+
+function addToWorkout(name) {
+  if (!name) return;
+  data.active.entries.push({ exercise: name, note: '', sets: [{ weight: null, reps: null, rpe: null }] });
+  save(); render();
+}
+function addToTemplate(name) {
+  if (!name) return;
+  editingTemplate.name = document.getElementById('tplName').value;
+  editingTemplate.exercises.push(name);
+  render();
 }
 
 // ---------- Ennätykset ----------
@@ -403,8 +468,8 @@ function workoutHTML() {
     ${w.entries.map((e, i) => entryHTML(e, i, w)).join('')}
 
     <div class="card">
-      <input id="newExercise" list="exlist" placeholder="Lisää liike (kirjoita nimi)">
-      <datalist id="exlist">${knownExercises().map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+      <input id="newExercise" data-suggest="workout" autocomplete="off" placeholder="Hae liikettä (esim. penkki, kyykky)">
+      <div class="sugg" id="sugg-workout"></div>
       <button class="full" data-act="add-exercise" style="margin-top:8px">+ Lisää liike</button>
     </div>
     <div class="row">
@@ -491,8 +556,8 @@ function templateEditHTML() {
         <button class="danger small" data-act="tpl-remove" data-i="${i}">✕</button>
       </div>`).join('')}
     <div class="card">
-      <input id="tplNewEx" list="exlist" placeholder="Lisää liike">
-      <datalist id="exlist">${knownExercises().map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+      <input id="tplNewEx" data-suggest="template" autocomplete="off" placeholder="Hae liikettä (esim. penkki, kyykky)">
+      <div class="sugg" id="sugg-template"></div>
       <button class="full" data-act="tpl-add" style="margin-top:8px">+ Lisää liike pohjaan</button>
     </div>
     <div class="row">
@@ -623,13 +688,8 @@ const actions = {
     data.workouts = data.workouts.filter(w => w.id !== el.dataset.id);
     save(); render();
   },
-  'add-exercise': () => {
-    const input = document.getElementById('newExercise');
-    const name = input.value.trim();
-    if (!name) return;
-    data.active.entries.push({ exercise: name, note: '', sets: [{ weight: null, reps: null, rpe: null }] });
-    save(); render();
-  },
+  'add-exercise': () => addToWorkout(resolveName(document.getElementById('newExercise').value)),
+  'pick-ex': el => (el.dataset.ctx === 'template' ? addToTemplate : addToWorkout)(el.dataset.name),
   'remove-exercise': el => {
     if (!confirm('Poistetaanko liike tästä treenistä?')) return;
     data.active.entries.splice(+el.dataset.i, 1);
@@ -719,12 +779,7 @@ const actions = {
     editingTemplate = JSON.parse(JSON.stringify(data.templates.find(t => t.id === el.dataset.id)));
     go('templateEdit');
   },
-  'tpl-add': () => {
-    editingTemplate.name = document.getElementById('tplName').value;
-    const n = document.getElementById('tplNewEx').value.trim();
-    if (n) editingTemplate.exercises.push(n);
-    render();
-  },
+  'tpl-add': () => addToTemplate(resolveName(document.getElementById('tplNewEx').value)),
   'tpl-remove': el => { editingTemplate.name = document.getElementById('tplName').value; editingTemplate.exercises.splice(+el.dataset.i, 1); render(); },
   'tpl-up': el => moveTpl(+el.dataset.i, -1),
   'tpl-down': el => moveTpl(+el.dataset.i, 1),
@@ -785,8 +840,19 @@ document.addEventListener('click', ev => {
 });
 
 // Kenttiin kirjoitettu arvo tallennetaan heti (ilman koko sivun uudelleenpiirtoa)
+// Enter valitsee listan ensimmäisen ehdotuksen (tai lisää kirjoitetun nimen, jos ehdotuksia ei ole)
+document.addEventListener('keydown', ev => {
+  const ctx = ev.target.dataset && ev.target.dataset.suggest;
+  if (ev.key !== 'Enter' || !ctx) return;
+  ev.preventDefault();
+  const first = document.querySelector('#sugg-' + ctx + ' .sg');
+  if (first) first.click();
+  else actions[ctx === 'template' ? 'tpl-add' : 'add-exercise']();
+});
+
 document.addEventListener('input', ev => {
   const el = ev.target;
+  if (el.dataset.suggest) { showSuggest(el); return; }
   if (!el.dataset.f || !data.active) return;
   const i = +el.dataset.i;
   const e = data.active.entries[i];

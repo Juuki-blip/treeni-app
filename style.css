@@ -55,6 +55,10 @@ textarea { resize: vertical; min-height: 44px; font-family: inherit; }
   padding: 8px 12px; display: flex; gap: 8px; align-items: center; justify-content: center;
 }
 .rest.hidden { display: none; }
+/* Liikehaun ehdotuslista */
+.sugg { margin-top: 6px; }
+.sugg .sg { display: flex; justify-content: space-between; align-items: center; width: 100%; text-align: left; background: var(--bg); border: 1px solid var(--card2); border-radius: 8px; padding: 12px; margin-bottom: 4px; }
+.sugg .sg.new { color: var(--accent); }
 .pr { color: #fbbf24; font-weight: 700; margin: 4px 0; }
 select { background: var(--bg); color: var(--text); border: 1px solid var(--card2); border-radius: 8px; padding: 8px; font-size: 0.95rem; width: auto; }
 /* Viikkovolyymin palkit */
