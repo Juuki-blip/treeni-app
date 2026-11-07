@@ -3,6 +3,9 @@
 
 const KEY = 'treeni-data-v1';
 
+// Muuttaa arvon luvuksi tai null:ksi, jos se ei ole luku. Määritelty tässä ylhäällä, koska lataus käyttää sitä.
+const num = v => (v === '' || v == null || isNaN(Number(v))) ? null : Number(v);
+
 // ---------- Tietojen lataus ja tallennus ----------
 // data sisältää: templates (treenipohjat), workouts (valmiit treenit), active (käynnissä oleva treeni)
 let data = load();
@@ -17,10 +20,23 @@ function load() {
 
 // Pohjan liike on olio { name, sets, min, max, weight }. Aiemmin pohjassa oli vain liikkeen nimi (teksti),
 // joten vanhat pohjat muunnetaan uuteen muotoon automaattisesti (3 sarjaa, ei toistoaluetta eikä painoa).
+// Samalla siivotaan luvut: paino, toistot ja RPE muutetaan luvuiksi (tai tyhjiksi), jos tiedosto on vioittunut
+// tai käsin muokattu. Näin virheellinen arvo ei pääse näytölle tai laskelmiin.
 function migrate(d) {
+  const cleanSet = s => ({ ...s, weight: num(s.weight), reps: num(s.reps), rpe: num(s.rpe) });
+  const cleanWorkout = w => ({
+    ...w,
+    entries: (Array.isArray(w.entries) ? w.entries : []).map(e => ({
+      ...e, exercise: String(e.exercise ?? ''), sets: (Array.isArray(e.sets) ? e.sets : []).map(cleanSet)
+    }))
+  });
+  d.workouts = (Array.isArray(d.workouts) ? d.workouts : []).map(cleanWorkout);
+  if (d.active) d.active = cleanWorkout(d.active);
   d.templates = (d.templates || []).map(t => ({
     ...t,
-    exercises: (t.exercises || []).map(e => typeof e === 'string' ? { name: e, sets: 3, min: null, max: null, weight: null } : e)
+    exercises: (t.exercises || []).map(e => typeof e === 'string'
+      ? { name: e, sets: 3, min: null, max: null, weight: null }
+      : { ...e, sets: num(e.sets), min: num(e.min), max: num(e.max), weight: num(e.weight) })
   }));
   return d;
 }
@@ -30,17 +46,39 @@ function migrate(d) {
 // prefs = käyttäjän asetukset, esim. { showSecondary: true } (näytetäänkö toissijaiset sarjat tilastoissa)
 function emptyData() { return { templates: [], workouts: [], active: null, targets: {}, muscles: {}, secondary: {}, prefs: { showSecondary: true } }; }
 const showSecondary = () => !data.prefs || data.prefs.showSecondary !== false;
+// Tallennus selaimen muistiin. Jos se epäonnistuu (tila loppu tai selain estää), näytetään näkyvä varoitus,
+// jotta käyttäjä tietää ottaa varmuuskopion eikä luule tietojen tallentuneen.
+let saveTimer = null, savePending = false;
 function save() {
-  localStorage.setItem(KEY, JSON.stringify(data));
+  clearTimeout(saveTimer); savePending = false;
+  try {
+    localStorage.setItem(KEY, JSON.stringify(data));
+    const w = document.getElementById('savewarn'); if (w) w.remove();
+    return true;
+  } catch (e) {
+    console.error('Tallennusvirhe', e);
+    if (!document.getElementById('savewarn')) {
+      const b = document.createElement('div');
+      b.id = 'savewarn'; b.className = 'savewarn';
+      b.innerHTML = '<b>Tallennus epäonnistui.</b> Tietoja ei tallenneta tälle laitteelle. ' +
+        '<button class="small" data-act="export">Lataa varmuuskopio</button>';
+      document.body.appendChild(b);
+    }
+    return false;
+  }
 }
+// Kirjoittaessa tallennetaan vasta, kun kirjoitus on tauonnut hetken (ei joka näppäinpainalluksella)
+function saveSoon() { savePending = true; clearTimeout(saveTimer); saveTimer = setTimeout(save, 300); }
+// Kun sivu menee taustalle tai suljetaan, kirjoitetaan odottava tallennus heti
+function flushSave() { if (savePending) save(); }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSave(); });
+window.addEventListener('pagehide', flushSave);
 
 // ---------- Apufunktiot ----------
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 // Muuttaa tekstin turvalliseksi HTML:ään (estää esim. < ja > merkkien sotkemisen)
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtDate = iso => new Date(iso).toLocaleDateString('fi-FI', { weekday: 'short', day: 'numeric', month: 'numeric', year: 'numeric' });
-const num = v => (v === '' || v == null || isNaN(Number(v))) ? null : Number(v);
-
 // Kaikki tunnetut liikkeet (pohjista ja tehdyistä treeneistä) ehdotuslistaa varten
 function knownExercises() {
   const set = new Set();
@@ -258,7 +296,13 @@ function weeklyVolume(offset) {
 }
 
 // ---------- Virtuaali-PT ----------
-const WEIGHT_STEP = 2.5; // kuinka paljon painoa ehdotetaan lisättäväksi kerralla (kg)
+// Kuinka paljon painoa ehdotetaan lisättäväksi kerralla (kg). Askel on suhteessa nykyiseen painoon:
+// kevyissä liikkeissä (esim. sivunostot käsipainoilla) 2,5 kg olisi liian iso hyppy.
+function weightStep(w) {
+  if (w < 20) return 1;
+  if (w < 100) return 2.5;
+  return 5;
+}
 const fmtN = n => String(Math.round(n * 100) / 100).replace('.', ',');
 
 // Neuvoo edellisen kerran perusteella, mitä seuraavalla kerralla kannattaa tehdä.
@@ -286,8 +330,9 @@ function coach(exercise, excludeId) {
     if (nearFailure) {
       return { type: 'hold', text: `Tavoite täyttyi (${t.max} toistoa), mutta RPE oli ${fmtN(maxRpe)}, eli sarjat veivät lähes uupumukseen. Pysy vielä painossa ${fmtN(top)} kg ja toista sama tulos vähän kevyemmin (RPE 8–9), ennen kuin nostat.` };
     }
-    // Jos sarjat olivat selvästi kevyitä, painoa voi nostaa reilummin
-    const step = easy ? WEIGHT_STEP * 2 : WEIGHT_STEP;
+    // Jos sarjat olivat selvästi kevyitä, painoa voi nostaa reilummin (vain vähintään 20 kg:n painoilla,
+    // jotta kevyissä liikkeissä hyppy ei kasva liian suureksi)
+    const step = easy && top >= 20 ? weightStep(top) * 2 : weightStep(top);
     return { type: 'up', text: `Tavoite täyttyi! Kaikki sarjat ${t.max}+ toistoa painolla ${fmtN(top)} kg${easy ? ` ja RPE oli matala (${fmtN(avgRpe)})` : ''}. Nosta painoa: kokeile ${fmtN(top + step)} kg ja tähtää ainakin ${t.min} toistoon.` };
   }
   if (worst < t.min) {
@@ -295,7 +340,7 @@ function coach(exercise, excludeId) {
   }
   // Toistot ovat tavoitealueella: RPE ratkaisee, onko varaa painaa kovemmin
   if (easy) {
-    return { type: 'up', text: `RPE oli matala (${fmtN(avgRpe)}), eli jäi vielä reilusti toistoja tankkiin. Voit nostaa painoa (${fmtN(top + WEIGHT_STEP)} kg) tai pysyä painossa ${fmtN(top)} kg ja puskea lähemmäs uupumusta, kunnes RPE on 8–9.` };
+    return { type: 'up', text: `RPE oli matala (${fmtN(avgRpe)}), eli jäi vielä reilusti toistoja tankkiin. Voit nostaa painoa (${fmtN(top + weightStep(top))} kg) tai pysyä painossa ${fmtN(top)} kg ja puskea lähemmäs uupumusta, kunnes RPE on 8–9.` };
   }
   if (nearFailure) {
     return { type: 'hold', text: `Sarjat menivät lähelle uupumusta (RPE ${fmtN(maxRpe)}). Pysy painossa ${fmtN(top)} kg ja yritä saada sama toistomäärä tai yksi lisätoisto (tavoite ${t.max}). Älä nosta painoa vielä.` };
@@ -564,14 +609,14 @@ function entryHTML(e, i, w) {
       ${(() => {
         // Lasketaan erikseen lämmittely- ja työsarjojen järjestysnumerot,
         // ja haetaan edellisen kerran vastaava sarja haamutekstiksi
-        let w = 0, k = 0;
+        let warmNo = 0, workNo = 0;
         const prevWarm = prev ? prev.sets.filter(x => x.warm) : [];
         const prevWork = prev ? prev.sets.filter(x => !x.warm) : [];
         return e.sets.map((s, j) => {
-          const p = s.warm ? prevWarm[w] : prevWork[k];
-          s.warm ? w++ : k++;
+          const p = s.warm ? prevWarm[warmNo] : prevWork[workNo];
+          s.warm ? warmNo++ : workNo++;
           return `<div class="set ${s.pre ? 'pre' : ''}">
-          <button class="n-btn ${s.warm ? 'warm' : ''}" data-act="toggle-warm" data-i="${i}" data-j="${j}" title="Vaihda lämmittelysarjaksi">${s.warm ? 'L' : k}</button>
+          <button class="n-btn ${s.warm ? 'warm' : ''}" data-act="toggle-warm" data-i="${i}" data-j="${j}" title="Vaihda lämmittelysarjaksi">${s.warm ? 'L' : workNo}</button>
           <input type="number" inputmode="decimal" step="any" placeholder="${p?.weight ?? ''}" value="${s.weight ?? ''}" data-f="weight" data-i="${i}" data-j="${j}">
           <input type="number" inputmode="numeric" step="1" placeholder="${p?.reps ?? ''}" value="${s.reps ?? ''}" data-f="reps" data-i="${i}" data-j="${j}">
           <input type="number" inputmode="decimal" step="0.5" min="1" max="10" placeholder="${p?.rpe ?? ''}" value="${s.rpe ?? ''}" data-f="rpe" data-i="${i}" data-j="${j}">
@@ -970,16 +1015,24 @@ document.addEventListener('input', ev => {
     document.getElementById('coach-' + i).innerHTML = coachHTML(coach(e.exercise, data.active.id));
   } else {
     const s = e.sets[+el.dataset.j];
-    s[el.dataset.f] = num(el.value);
+    let v = num(el.value);
+    if (el.dataset.f === 'rpe' && v != null) v = Math.min(10, Math.max(1, v)); // RPE on aina 1–10
+    s[el.dataset.f] = v;
     delete s.pre; // muokattu sarja ei ole enää pelkkä esitäyttö
     el.closest('.set').classList.remove('pre');
   }
   document.getElementById('live-' + i).textContent = liveNote(e);
-  save();
+  saveSoon();
 });
 
 // Varmuuskopion palautus
 document.addEventListener('change', ev => {
+  // Kun RPE-kenttä jätetään, näytetään kentässä tallennettu (1–10 rajattu) arvo
+  if (ev.target.dataset.f === 'rpe' && data.active) {
+    const s = data.active.entries[+ev.target.dataset.i].sets[+ev.target.dataset.j];
+    ev.target.value = s.rpe ?? '';
+    return;
+  }
   // Lihasryhmän valinta liikkeen historiaikkunassa
   if (ev.target.dataset.muscleFor) {
     const ex = ev.target.dataset.muscleFor;
@@ -1005,6 +1058,7 @@ document.addEventListener('change', ev => {
   }
   if (ev.target.id !== 'importFile') return;
   const file = ev.target.files[0];
+  ev.target.value = ''; // tyhjennetään valinta, jotta saman tiedoston voi valita uudelleen (esim. Peruuta-painalluksen jälkeen)
   if (!file) return;
   const reader = new FileReader();
   reader.onload = () => {

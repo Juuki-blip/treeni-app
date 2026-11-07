@@ -55,6 +55,9 @@ textarea { resize: vertical; min-height: 44px; font-family: inherit; }
   padding: 8px 12px; display: flex; gap: 8px; align-items: center; justify-content: center;
 }
 .rest.hidden { display: none; }
+/* Tallennusvirheen varoituspalkki */
+.savewarn { position: fixed; top: 0; left: 0; right: 0; z-index: 20; background: var(--danger); color: #fff; padding: 10px 12px; font-size: 0.95rem; }
+.savewarn button { margin-left: 6px; }
 /* Pohjan liikkeen asetukset */
 .tplcfg { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
 .tplcfg label { display: block; color: var(--muted); font-size: 0.75rem; }
