@@ -313,6 +313,10 @@ function homeHTML() {
         <div class="muted">Käynnissä oleva treeni</div>
         <div><b>${esc(a.name)}</b></div>
         <button class="primary full" data-act="open-active" style="margin-top:8px">Jatka treeniä</button>
+        <div class="row" style="margin-top:8px">
+          <button class="grow" data-act="finish">✔ Lopeta ja tallenna</button>
+          <button class="danger" data-act="cancel-workout">Hylkää</button>
+        </div>
       </div>` : ''}
     <button class="primary full" data-act="start-empty">+ Aloita tyhjä treeni</button>
 
@@ -679,13 +683,14 @@ const actions = {
     save(); render();
   },
   'finish': () => {
-    const w = data.active;
-    // Poistetaan tyhjät sarjat ja liikkeet, joissa ei ole yhtään sarjaa
-    // (myös esitäytetyt sarjat, joita ei ole muokattu tai kuitattu)
-    w.entries.forEach(e => e.sets = e.sets.filter(s => !s.pre && (s.weight != null || s.reps != null)));
-    stopRest();
-    w.entries = w.entries.filter(e => e.sets.length);
+    // Siivotaan tyhjät sarjat ja liikkeet, joissa ei ole yhtään sarjaa
+    // (myös esitäytetyt sarjat, joita ei ole muokattu tai kuitattu).
+    // Työskennellään kopiolla, jotta käynnissä oleva treeni ei muutu, jos tallennus keskeytyy.
+    const w = { ...data.active, entries: data.active.entries
+      .map(e => ({ ...e, sets: e.sets.filter(s => !s.pre && (s.weight != null || s.reps != null)) }))
+      .filter(e => e.sets.length) };
     if (!w.entries.length) { alert('Treenissä ei ole yhtään täytettyä sarjaa.'); return; }
+    stopRest();
     data.workouts.push(w);
     data.active = null;
     save(); go('home');
