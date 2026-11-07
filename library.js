@@ -88,3 +88,98 @@ const LIBRARY = [
   ['Vatsarulla', 'Vatsa', 'ab wheel rollout'],
   ['Venäläinen kierto', 'Vatsa', 'russian twist']
 ];
+
+// ---------- Liikeohjeet (ExRx.net) ----------
+// Suorat linkit ExRx:n liikesivuihin. Osoitteet on poimittu ExRx:n omasta liikelistasta (exrx.net/Lists/Directory)
+// ja jokainen sivu on tarkistettu toimivaksi. Liikkeet, joille ei ole ilmaista omaa sivua (esim. sumo-maastaveto),
+// ohjataan lihasryhmän liikelistalle.
+const EXRX_BASE = 'https://exrx.net/WeightExercises/';
+const EXRX_PAGES = {
+ "Penkkipunnerrus": "PectoralSternal/BBBenchPress",
+ "Penkkipunnerrus käsipainoilla": "PectoralSternal/DBBenchPress",
+ "Vinopenkkipunnerrus tangolla": "PectoralClavicular/BBInclineBenchPress",
+ "Vinopenkki käsipainoilla": "PectoralClavicular/DBInclineBenchPress",
+ "Alavinopenkki": "PectoralSternal/BBDeclineBenchPress",
+ "Rintaprässi": "PectoralSternal/LVChestPress",
+ "Rintarist käsipainoilla": "PectoralSternal/DBFly",
+ "Rintarist taljalla": "PectoralSternal/CBStandingFly",
+ "Rintarist laitteessa": "PectoralSternal/LVPecDeckFly",
+ "Dipit": "PectoralSternal/BWChestDip",
+ "Punnerrus": "PectoralSternal/BWPushup",
+ "Leuanveto": "LatissimusDorsi/BWPullup",
+ "Avustettu leuanveto": "LatissimusDorsi/ASPullupBand",
+ "Ylätalja": "LatissimusDorsi/CBFrontPulldown",
+ "Kapea ylätalja": "LatissimusDorsi/CBCloseGripPulldown",
+ "Alatalja soutu": "BackGeneral/CBSeatedRow",
+ "Kulmasoutu": "BackGeneral/BBBentOverRow",
+ "Käsipainosoutu": "BackGeneral/DBBentOverRow",
+ "Rintatuettu soutu": "BackGeneral/DBLyingRow",
+ "T-tankosoutu": "BackGeneral/LVTBarRow",
+ "Soutulaite": "BackGeneral/LVSeatedRow",
+ "Suorakätinen ylätalja": "LatissimusDorsi/CBBentoverPullover",
+ "Selänojennus": "ErectorSpinae/BW45HyperextensionArmsCrossed",
+ "Hartioidenkohautus": "TrapeziusUpper/DBShrug",
+ "Pystypunnerrus": "DeltoidAnterior/BBMilitaryPress",
+ "Pystypunnerrus käsipainoilla": "DeltoidAnterior/DBShoulderPress",
+ "Olkapääprässi": "DeltoidAnterior/LVShoulderPress",
+ "Arnold-punnerrus": "DeltoidAnterior/DBArnoldPress",
+ "Sivunostot": "DeltoidLateral/DBLateralRaise",
+ "Sivunosto taljalla": "DeltoidLateral/CBLateralRaise",
+ "Etunostot": "DeltoidAnterior/DBFrontRaise",
+ "Takaolkapää": "DeltoidPosterior/DBRearLateralRaise",
+ "Face pull": "DeltoidPosterior/CBStandingRearDeltRowRope",
+ "Pystysoutu": "DeltoidLateral/BBUprightRow",
+ "Hauiskääntö": "Biceps/DBCurl",
+ "Hauiskääntö tangolla": "Biceps/BBCurl",
+ "Vasarakääntö": "Brachioradialis/DBHammerCurl",
+ "Saarnaajapenkki": "Brachialis/BBPreacherCurl",
+ "Hauiskääntö taljalla": "Biceps/CBCurl",
+ "Vinopenkkihauiskääntö": "Biceps/DBInclineCurl",
+ "Ojentajat taljalla": "Triceps/CBPushdown",
+ "Ranskalainen punnerrus": "Triceps/BBLyingTriExt",
+ "Ojentajat pään yli": "Triceps/DBTriExt",
+ "Penkkipunnerrus ahdas ote": "Triceps/BBCloseGripBenchPress",
+ "Taka-ojennus": "Triceps/DBKickback",
+ "Takakyykky": "Quadriceps/BBSquat",
+ "Etukyykky": "Quadriceps/BBFrontSquat",
+ "Jalkaprässi": "Quadriceps/SL45LegPress",
+ "Jalan ojennus": "Quadriceps/LVLegExtension",
+ "Bulgarialainen askelkyykky": "Quadriceps/BWSingleLegSplitSquat",
+ "Askelkyykky": "Quadriceps/DBLunge",
+ "Hack-kyykky": "Quadriceps/SLHackSquat",
+ "Goblet-kyykky": "Quadriceps/DBSquat",
+ "Askelnousu": "Quadriceps/DBStepUp",
+ "Smith-kyykky": "Quadriceps/SMSquat",
+ "Maastaveto": "ErectorSpinae/BBDeadlift",
+ "Romanian maastaveto": "OlympicLifts/RomanianDeadlift",
+ "Suorin jaloin maastaveto": "ErectorSpinae/BBStiffLegDeadlift",
+ "Jalkakoukistus istuen": "Hamstrings/LVSeatedLegCurl",
+ "Jalkakoukistus makuulla": "Hamstrings/LVLyingLegCurl",
+ "Hyvää huomenta": "Hamstrings/BBGoodMorning",
+ "Pohjoismainen jalkakoukistus": "Hamstrings/ASHamstringRaiseSelf",
+ "Lonkannosto": "GluteusMaximus/BBHipThrust",
+ "Pakarasilta": "GluteusMaximus/STHipBridge",
+ "Pakarapotku taljalla": "GluteusMaximus/CBGluteKickback",
+ "Lonkan loitonnus laitteessa": "HipAbductor/LVSeatedHipAbduction",
+ "Pohjenousu seisten": "Gastrocnemius/LVStandingCalfRaise",
+ "Pohjenousu istuen": "Soleus/LVSeatedCalfRaise",
+ "Pohjenousu jalkaprässissä": "Gastrocnemius/SL45CalfPress",
+ "Vatsarutistus taljalla": "RectusAbdominis/CBKneelingCrunch",
+ "Vatsarutistus": "RectusAbdominis/BWCrunch",
+ "Jalannosto riippuen": "HipFlexors/BWHangingLegRaise",
+ "Lankku": "RectusAbdominis/BWFrontPlank"
+};
+
+// Lihasryhmän liikelista ExRx:ssä varalinkiksi
+const EXRX_LISTS = {
+  'Rinta': 'ChestWt', 'Selkä': 'BackWt', 'Olkapäät': 'ShouldWt', 'Hauis': 'ArmWt#Biceps', 'Ojentajat': 'ArmWt#Triceps',
+  'Etureidet': 'ThighWt#Quadriceps', 'Takareidet': 'ThighWt#Hamstrings', 'Pakarat': 'HipsWt#Gluteus',
+  'Pohkeet': 'CalfWt', 'Vatsa': 'WaistWt'
+};
+
+// Palauttaa { url, direct } tai null. direct = suora liikesivu, muuten lihasryhmän lista.
+function exrxLink(name, muscle) {
+  if (EXRX_PAGES[name]) return { url: EXRX_BASE + EXRX_PAGES[name], direct: true };
+  if (EXRX_LISTS[muscle]) return { url: 'https://exrx.net/Lists/ExList/' + EXRX_LISTS[muscle], direct: false };
+  return null;
+}

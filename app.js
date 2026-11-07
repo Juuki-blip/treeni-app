@@ -274,6 +274,13 @@ function targetNote(entry) {
   return '';
 }
 
+// Linkki liikeohjeeseen (ExRx.net). Avautuu uuteen välilehteen, joten treeni ei katoa.
+function exrxHTML(name) {
+  const l = exrxLink(name, muscleOf(name));
+  if (!l) return '';
+  return `<a class="exlink" href="${l.url}" target="_blank" rel="noopener noreferrer">${l.direct ? 'Näytä liikeohje' : 'Selaa liikeohjeita'} (ExRx.net) ↗</a>`;
+}
+
 const coachHTML = c => c ? `<div class="coach ${c.type}">🤖 ${esc(c.text)}</div>` : '';
 
 // ---------- Näkymän tila ----------
@@ -490,6 +497,7 @@ function entryHTML(e, i, w) {
         <button class="link" data-act="history" data-ex="${esc(e.exercise)}">${esc(e.exercise)}</button>
         <button class="danger small" data-act="remove-exercise" data-i="${i}">Poista</button>
       </div>
+      ${exrxHTML(e.exercise)}
       <div class="prev">${prev
         ? `Edellinen (${fmtDate(prev.date)}): ${prev.sets.map(fmtSet).join(', ')}${prev.note ? '<br>📝 ' + esc(prev.note) : ''}`
         : 'Ei aiempaa kertaa'}</div>
@@ -571,6 +579,7 @@ function settingsHTML() {
     <div class="row between"><h1>Varmuuskopio</h1><button class="small" data-act="home">⬅ Takaisin</button></div>
     <div class="card">
       <p class="muted">Pysyvä tallennus: ${persisted === true ? 'käytössä ✅' : 'ei varmistettu (selain voi tyhjentää tiedot, jos tila loppuu), joten lataa varmuuskopio säännöllisesti'}.</p>
+      <p class="muted">Liikeohjeiden linkit vievät ulkopuoliselle ExRx.net-sivustolle. Sivusto on erillinen palvelu, ja osa sen sisällöstä voi vaatia maksullisen tilauksen.</p>
       <p class="muted">Tiedot ovat vain tämän puhelimen selaimessa. Lataa varmuuskopio silloin tällöin, niin et menetä historiaa, jos puhelin vaihtuu tai selaimen tiedot tyhjennetään.</p>
       <button class="primary full" data-act="export">Lataa varmuuskopio (tiedosto)</button>
       <p></p>
@@ -584,6 +593,7 @@ function openHistory(exercise) {
   const h = history(exercise, null);
   modal.innerHTML = `<div class="sheet">
     <div class="row between"><h1>${esc(exercise)}</h1><button class="small" data-act="close-modal">Sulje</button></div>
+    ${exrxHTML(exercise)}
     ${data.targets[exercise] ? `<div class="muted">Tavoite: ${data.targets[exercise].min}–${data.targets[exercise].max} toistoa</div>` : ''}
     ${coachHTML(coach(exercise, null))}
     <div class="row" style="margin:8px 0">

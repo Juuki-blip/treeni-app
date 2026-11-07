@@ -1,6 +1,6 @@
 // Palvelutyöntekijä: tallentaa sovelluksen tiedostot puhelimeen, jotta se toimii ilman nettiä.
 // Kun muutat koodia, kasvata versionumeroa, niin puhelin hakee uudet tiedostot.
-const CACHE = 'treeni-v7';
+const CACHE = 'treeni-v8';
 const FILES = ['./', './index.html', './style.css', './app.js', './programs.js', './library.js', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {

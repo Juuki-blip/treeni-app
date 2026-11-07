@@ -55,6 +55,7 @@ textarea { resize: vertical; min-height: 44px; font-family: inherit; }
   padding: 8px 12px; display: flex; gap: 8px; align-items: center; justify-content: center;
 }
 .rest.hidden { display: none; }
+.exlink { display: inline-block; color: var(--accent); font-size: 0.9rem; padding: 6px 0; text-decoration: underline; }
 /* Liikehaun ehdotuslista */
 .sugg { margin-top: 6px; }
 .sugg .sg { display: flex; justify-content: space-between; align-items: center; width: 100%; text-align: left; background: var(--bg); border: 1px solid var(--card2); border-radius: 8px; padding: 12px; margin-bottom: 4px; }
