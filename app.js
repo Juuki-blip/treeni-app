@@ -17,7 +17,9 @@ function load() {
 // targets = liikekohtaiset tavoitetoistoalueet, esim. { "Jalkaprässi": { min: 12, max: 15 } }
 // muscles = käyttäjän omat lihasryhmävalinnat liikkeille, esim. { "Oma liike": "Rinta" }
 // secondary = käyttäjän omat toissijaiset lihasryhmät liikkeille, esim. { "Oma liike": ["Olkapäät"] }
-function emptyData() { return { templates: [], workouts: [], active: null, targets: {}, muscles: {}, secondary: {} }; }
+// prefs = käyttäjän asetukset, esim. { showSecondary: true } (näytetäänkö toissijaiset sarjat tilastoissa)
+function emptyData() { return { templates: [], workouts: [], active: null, targets: {}, muscles: {}, secondary: {}, prefs: { showSecondary: true } }; }
+const showSecondary = () => !data.prefs || data.prefs.showSecondary !== false;
 function save() {
   localStorage.setItem(KEY, JSON.stringify(data));
 }
@@ -224,7 +226,8 @@ function weeklyVolume(offset) {
       const n = e.sets.filter(s => !s.warm && (s.weight != null || s.reps != null)).length;
       if (!n) return;
       add(muscleOf(e.exercise), 'p', n);
-      secondaryOf(e.exercise).forEach(m => add(m, 's', n * SECONDARY_WEIGHT));
+      // Toissijaiset lasketaan vain, jos käyttäjä ei ole piilottanut niitä tilastosivun valinnalla
+      if (showSecondary()) secondaryOf(e.exercise).forEach(m => add(m, 's', n * SECONDARY_WEIGHT));
     }));
   return vol;
 }
@@ -460,6 +463,9 @@ function statsHTML() {
       <b>${statsWeek === 0 ? 'Tämä viikko' : 'Viikko'} ${d(start)}–${d(last)}</b>
       <button class="small" data-act="week" data-d="1" ${statsWeek >= 0 ? 'disabled' : ''}>▶</button>
     </div>
+    <label class="chip" style="margin-top:10px">
+      <input type="checkbox" data-pref="showSecondary" ${showSecondary() ? 'checked' : ''}> Laske toissijaiset lihasryhmät mukaan (0,5 sarjaa)
+    </label>
     <div class="card" style="margin-top:8px">
       ${groups.map(m => {
         const p = vol[m] ? vol[m].p : 0, s = vol[m] ? vol[m].s : 0, n = p + s;
@@ -472,7 +478,9 @@ function statsHTML() {
             <i style="left:${10 / MAX * 100}%"></i><i style="left:${20 / MAX * 100}%"></i></div>
           <span class="vnum" title="${fmtN(p)} pääasiallista + ${fmtN(s)} toissijaista">${fmtN(n)}</span></div>`;
       }).join('')}
-      <p class="muted" style="margin-bottom:0">Viivat kohdissa 10 ja 20 sarjaa. Tutkimusten mukaan noin 10–20 kovaa sarjaa lihasryhmää kohden viikossa riittää useimmille lihaskasvuun. Lämmittelysarjoja ei lasketa. Jokainen sarja lasketaan kokonaan liikkeen pääasialliselle lihasryhmälle ja puolikkaana toissijaisille (esim. penkkipunnerruksen sarja: 1 rinta, 0,5 olkapäät, 0,5 ojentajat). Palkin vaalea osa on toissijaisten osuus. Voit muokata liikkeen lihasryhmiä liikkeen nimestä avautuvassa ikkunassa.</p>
+      <p class="muted" style="margin-bottom:0">Viivat kohdissa 10 ja 20 sarjaa. Tutkimusten mukaan noin 10–20 kovaa sarjaa lihasryhmää kohden viikossa riittää useimmille lihaskasvuun. Lämmittelysarjoja ei lasketa. ${showSecondary()
+        ? 'Jokainen sarja lasketaan kokonaan liikkeen pääasialliselle lihasryhmälle ja puolikkaana toissijaisille (esim. penkkipunnerruksen sarja: 1 rinta, 0,5 olkapäät, 0,5 ojentajat). Palkin vaalea osa on toissijaisten osuus. Tutkimusten suositus 10–20 sarjaa koskee yleensä suoria sarjoja, joten toissijaiset nostavat lukuja.'
+        : 'Vain liikkeen pääasiallinen lihasryhmä lasketaan, joten luvut vastaavat tutkimusten suoria sarjoja.'} Voit muokata liikkeen lihasryhmiä liikkeen nimestä avautuvassa ikkunassa.</p>
     </div>
     <h2>Viimeisimmät ennätykset</h2>
     ${prs.map(p => `<div class="card"><b>🏆 ${esc(p.exercise)}</b>
@@ -915,6 +923,13 @@ document.addEventListener('change', ev => {
     data.muscles[ex] = ev.target.value;
     save();
     openHistory(ex); // piirretään uudelleen, jotta toissijaisten valinnoista poistuu uusi pääryhmä
+    return;
+  }
+  // Tilastosivun asetus: toissijaisten näyttäminen
+  if (ev.target.dataset.pref === 'showSecondary') {
+    data.prefs = data.prefs || {};
+    data.prefs.showSecondary = ev.target.checked;
+    save(); render();
     return;
   }
   // Toissijaisten lihasryhmien valinta: tallennetaan koko valintalista liikkeelle
