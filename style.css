@@ -60,6 +60,8 @@ textarea { resize: vertical; min-height: 44px; font-family: inherit; }
 }
 .modal.hidden { display: none; }
 .modal .sheet { background: var(--bg); max-width: 600px; margin: 0 auto; border-radius: 14px; padding: 14px; }
+.folder summary { cursor: pointer; font-weight: 700; }
+.folder .day { padding: 8px 0; border-top: 1px solid var(--card2); }
 /* Virtuaali-PT */
 .target { margin-bottom: 8px; }
 .target input { width: 70px; text-align: center; padding: 8px 4px; }

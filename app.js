@@ -72,17 +72,30 @@ function coach(exercise, excludeId) {
   const worst = Math.min(...topSets.map(s => s.reps));       // heikoin sarja
   const rpes = topSets.map(s => s.rpe).filter(r => r != null);
   const maxRpe = rpes.length ? Math.max(...rpes) : null;
+  const avgRpe = rpes.length ? rpes.reduce((a, b) => a + b, 0) / rpes.length : null;
+  // RPE 10 = uupumus, 9 = 1 toisto jäljellä, 8 = 2 toistoa jäljellä, 7 = 3 toistoa jäljellä
+  const easy = avgRpe != null && avgRpe <= 7;        // sarjat tuntuivat kevyiltä
+  const nearFailure = maxRpe != null && maxRpe >= 9.5; // sarjat veivät lähes uupumukseen
 
   if (worst >= t.max) {
-    if (maxRpe != null && maxRpe >= 9.5) {
-      return { type: 'hold', text: `Tavoite täyttyi (${t.max} toistoa), mutta RPE oli ${fmtN(maxRpe)}. Pysy vielä painossa ${fmtN(top)} kg ja tee sarjat kevyemmin, ennen kuin nostat painoa.` };
+    if (nearFailure) {
+      return { type: 'hold', text: `Tavoite täyttyi (${t.max} toistoa), mutta RPE oli ${fmtN(maxRpe)}, eli sarjat veivät lähes uupumukseen. Pysy vielä painossa ${fmtN(top)} kg ja toista sama tulos vähän kevyemmin (RPE 8–9), ennen kuin nostat.` };
     }
-    return { type: 'up', text: `Tavoite täyttyi! Kaikki sarjat ${t.max}+ toistoa painolla ${fmtN(top)} kg. Nosta painoa: kokeile ${fmtN(top + WEIGHT_STEP)} kg ja tähtää ainakin ${t.min} toistoon.` };
+    // Jos sarjat olivat selvästi kevyitä, painoa voi nostaa reilummin
+    const step = easy ? WEIGHT_STEP * 2 : WEIGHT_STEP;
+    return { type: 'up', text: `Tavoite täyttyi! Kaikki sarjat ${t.max}+ toistoa painolla ${fmtN(top)} kg${easy ? ` ja RPE oli matala (${fmtN(avgRpe)})` : ''}. Nosta painoa: kokeile ${fmtN(top + step)} kg ja tähtää ainakin ${t.min} toistoon.` };
   }
   if (worst < t.min) {
     return { type: 'down', text: `Heikoin sarja jäi alle tavoitealueen (${worst} toistoa, tavoite ${t.min}–${t.max}). Pysy painossa ${fmtN(top)} kg ja yritä päästä vähintään ${t.min} toistoon. Jos ei onnistu kahdella kerralla, vähennä painoa.` };
   }
-  return { type: 'hold', text: `Olet tavoitealueella. Pysy painossa ${fmtN(top)} kg ja yritä lisätä toistoja: tähtää ${Math.min(worst + 1, t.max)} toistoon jokaisessa sarjassa (tavoite ${t.max}).` };
+  // Toistot ovat tavoitealueella: RPE ratkaisee, onko varaa painaa kovemmin
+  if (easy) {
+    return { type: 'up', text: `RPE oli matala (${fmtN(avgRpe)}), eli jäi vielä reilusti toistoja tankkiin. Voit nostaa painoa (${fmtN(top + WEIGHT_STEP)} kg) tai pysyä painossa ${fmtN(top)} kg ja puskea lähemmäs uupumusta, kunnes RPE on 8–9.` };
+  }
+  if (nearFailure) {
+    return { type: 'hold', text: `Sarjat menivät lähelle uupumusta (RPE ${fmtN(maxRpe)}). Pysy painossa ${fmtN(top)} kg ja yritä saada sama toistomäärä tai yksi lisätoisto (tavoite ${t.max}). Älä nosta painoa vielä.` };
+  }
+  return { type: 'hold', text: `Olet tavoitealueella${maxRpe != null ? ` ja RPE on sopiva (${fmtN(avgRpe)})` : ''}. Pysy painossa ${fmtN(top)} kg ja yritä lisätä toistoja: tähtää ${Math.min(worst + 1, t.max)} toistoon jokaisessa sarjassa (tavoite ${t.max}).${maxRpe == null ? ' Kirjaa myös RPE, niin neuvot tarkentuvat.' : ''}` };
 }
 
 // Reaaliaikainen kehu kesken treenin, kun kaikki sarjat suurimmalla painolla yltävät tavoitteen ylärajaan
@@ -131,6 +144,21 @@ function homeHTML() {
         <button class="primary full" data-act="open-active" style="margin-top:8px">Jatka treeniä</button>
       </div>` : ''}
     <button class="primary full" data-act="start-empty">+ Aloita tyhjä treeni</button>
+
+    <h2>Ohjelmarungot</h2>
+    ${PROGRAMS.map(p => `
+      <details class="card folder">
+        <summary>📁 ${esc(p.name)}</summary>
+        <p class="muted">${esc(p.info)}</p>
+        ${p.days.map((d, i) => `
+          <div class="row between day">
+            <div class="grow"><b>${esc(d.name)}</b>
+              <div class="muted">${d.exercises.length} liikettä, ${d.exercises.reduce((n, x) => n + x[1], 0)} sarjaa</div></div>
+            <button class="small" data-act="preview-program" data-p="${p.id}" data-d="${i}">Katso</button>
+            <button class="primary small" data-act="start-program" data-p="${p.id}" data-d="${i}">Aloita</button>
+          </div>`).join('')}
+      </details>`).join('')}
+    <details class="card folder"><summary>ℹ️ Ohjeita ohjelmien käyttöön</summary><p class="muted">${esc(PROGRAM_NOTES)}</p></details>
 
     <h2>Omat treenipohjat</h2>
     ${data.templates.map(t => `
@@ -330,6 +358,32 @@ const actions = {
     if (data.active && !confirm('Käynnissä oleva treeni hylätään. Jatketaanko?')) return;
     const t = data.templates.find(x => x.id === el.dataset.id);
     newWorkout(t.name, t.exercises);
+  },
+  'start-program': el => {
+    if (data.active && !confirm('Käynnissä oleva treeni hylätään. Jatketaanko?')) return;
+    const p = PROGRAMS.find(x => x.id === el.dataset.p);
+    const d = p.days[+el.dataset.d];
+    data.active = {
+      id: uid(), name: d.name, date: new Date().toISOString(),
+      // Jokaiselle liikkeelle luodaan ohjelman mukainen määrä tyhjiä sarjoja
+      entries: d.exercises.map(([name, sets]) => ({
+        exercise: name, note: '',
+        sets: Array.from({ length: sets }, () => ({ weight: null, reps: null, rpe: null }))
+      }))
+    };
+    // Asetetaan tavoitetoistoalueet, mutta ei ylikirjoiteta käyttäjän omia
+    d.exercises.forEach(([name, , min, max]) => { if (!data.targets[name]) data.targets[name] = { min, max }; });
+    save(); go('workout');
+  },
+  'preview-program': el => {
+    const p = PROGRAMS.find(x => x.id === el.dataset.p);
+    const d = p.days[+el.dataset.d];
+    modal.innerHTML = `<div class="sheet">
+      <div class="row between"><h1>${esc(d.name)}</h1><button class="small" data-act="close-modal">Sulje</button></div>
+      <div class="muted">${esc(p.name)}</div>
+      ${d.exercises.map(([n, s, a, b]) => `<div class="card row between"><b>${esc(n)}</b><span>${s} × ${a}–${b}</span></div>`).join('')}
+    </div>`;
+    modal.classList.remove('hidden');
   },
   'delete-workout': el => {
     if (!confirm('Poistetaanko treeni pysyvästi?')) return;
