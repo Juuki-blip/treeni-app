@@ -60,6 +60,16 @@ textarea { resize: vertical; min-height: 44px; font-family: inherit; }
 }
 .modal.hidden { display: none; }
 .modal .sheet { background: var(--bg); max-width: 600px; margin: 0 auto; border-radius: 14px; padding: 14px; }
+/* Virtuaali-PT */
+.target { margin-bottom: 8px; }
+.target input { width: 70px; text-align: center; padding: 8px 4px; }
+.coach { border-radius: 10px; padding: 10px; margin: 6px 0 10px; font-size: 0.95rem; line-height: 1.4; background: var(--card2); }
+.coach.up { background: #14532d; }
+.coach.hold { background: #1e3a8a; }
+.coach.down { background: #7c2d12; }
+.coach.info { color: var(--muted); font-size: 0.85rem; }
+.live { color: var(--accent); font-weight: 600; }
+.live:empty { display: none; }
 .chart { width: 100%; height: auto; background: var(--card); border-radius: 10px; }
 .tabs { display: flex; gap: 8px; margin: 8px 0; }
 .tabs button.active { background: var(--accent); color: #052e16; }

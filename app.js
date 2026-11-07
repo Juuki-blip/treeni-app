@@ -10,10 +10,12 @@ let data = load();
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) return Object.assign({ templates: [], workouts: [], active: null }, JSON.parse(raw));
+    if (raw) return Object.assign(emptyData(), JSON.parse(raw));
   } catch (e) { console.error('Latausvirhe', e); }
-  return { templates: [], workouts: [], active: null };
+  return emptyData();
 }
+// targets = liikekohtaiset tavoitetoistoalueet, esim. { "Jalkaprässi": { min: 12, max: 15 } }
+function emptyData() { return { templates: [], workouts: [], active: null, targets: {} }; }
 function save() {
   localStorage.setItem(KEY, JSON.stringify(data));
 }
@@ -49,6 +51,55 @@ function history(exercise, excludeId) {
 const fmtSet = s => `${s.weight ?? '?'} kg × ${s.reps ?? '?'}${s.rpe != null ? ' @' + s.rpe : ''}`;
 // Arvioitu yhden toiston maksimi (Epleyn kaava)
 const e1rm = s => (s.weight && s.reps) ? s.weight * (1 + s.reps / 30) : 0;
+
+// ---------- Virtuaali-PT ----------
+const WEIGHT_STEP = 2.5; // kuinka paljon painoa ehdotetaan lisättäväksi kerralla (kg)
+const fmtN = n => String(Math.round(n * 100) / 100).replace('.', ',');
+
+// Neuvoo edellisen kerran perusteella, mitä seuraavalla kerralla kannattaa tehdä.
+// Palauttaa { type, text } tai null, jos neuvottavaa ei ole.
+function coach(exercise, excludeId) {
+  const h = history(exercise, excludeId)[0];
+  if (!h) return null;
+  const t = data.targets[exercise];
+  if (!t || !t.min || !t.max) return { type: 'info', text: 'Aseta liikkeelle tavoitetoistoalue, niin virtuaali-PT osaa neuvoa.' };
+
+  const sets = h.sets.filter(s => s.weight != null && s.reps != null);
+  if (!sets.length) return null;
+  // Katsotaan vain suurimmalla painolla tehtyjä sarjoja (kevyemmät ovat yleensä lämmittelyä)
+  const top = Math.max(...sets.map(s => s.weight));
+  const topSets = sets.filter(s => s.weight === top);
+  const worst = Math.min(...topSets.map(s => s.reps));       // heikoin sarja
+  const rpes = topSets.map(s => s.rpe).filter(r => r != null);
+  const maxRpe = rpes.length ? Math.max(...rpes) : null;
+
+  if (worst >= t.max) {
+    if (maxRpe != null && maxRpe >= 9.5) {
+      return { type: 'hold', text: `Tavoite täyttyi (${t.max} toistoa), mutta RPE oli ${fmtN(maxRpe)}. Pysy vielä painossa ${fmtN(top)} kg ja tee sarjat kevyemmin, ennen kuin nostat painoa.` };
+    }
+    return { type: 'up', text: `Tavoite täyttyi! Kaikki sarjat ${t.max}+ toistoa painolla ${fmtN(top)} kg. Nosta painoa: kokeile ${fmtN(top + WEIGHT_STEP)} kg ja tähtää ainakin ${t.min} toistoon.` };
+  }
+  if (worst < t.min) {
+    return { type: 'down', text: `Heikoin sarja jäi alle tavoitealueen (${worst} toistoa, tavoite ${t.min}–${t.max}). Pysy painossa ${fmtN(top)} kg ja yritä päästä vähintään ${t.min} toistoon. Jos ei onnistu kahdella kerralla, vähennä painoa.` };
+  }
+  return { type: 'hold', text: `Olet tavoitealueella. Pysy painossa ${fmtN(top)} kg ja yritä lisätä toistoja: tähtää ${Math.min(worst + 1, t.max)} toistoon jokaisessa sarjassa (tavoite ${t.max}).` };
+}
+
+// Reaaliaikainen kehu kesken treenin, kun kaikki sarjat suurimmalla painolla yltävät tavoitteen ylärajaan
+function liveNote(entry) {
+  const t = data.targets[entry.exercise];
+  if (!t || !t.max) return '';
+  const sets = entry.sets.filter(s => s.weight != null && s.reps != null);
+  if (!sets.length) return '';
+  const top = Math.max(...sets.map(s => s.weight));
+  const topSets = sets.filter(s => s.weight === top);
+  if (topSets.length >= 2 && topSets.every(s => s.reps >= t.max)) {
+    return `🎉 Tavoite täyttyi tänään painolla ${fmtN(top)} kg! Virtuaali-PT kertoo treenin lopussa, mitä seuraavaksi.`;
+  }
+  return '';
+}
+
+const coachHTML = c => c ? `<div class="coach ${c.type}">🤖 ${esc(c.text)}</div>` : '';
 
 // ---------- Näkymän tila ----------
 let view = 'home';       // home | workout | templates | templateEdit | settings
@@ -139,6 +190,13 @@ function entryHTML(e, i, w) {
       <div class="prev">${prev
         ? `Edellinen (${fmtDate(prev.date)}): ${prev.sets.map(fmtSet).join(', ')}${prev.note ? '<br>📝 ' + esc(prev.note) : ''}`
         : 'Ei aiempaa kertaa'}</div>
+      <div class="target row">
+        <span class="muted">Tavoitetoistot</span>
+        <input type="number" inputmode="numeric" min="1" placeholder="min" value="${data.targets[e.exercise]?.min ?? ''}" data-f="tmin" data-i="${i}">
+        <span class="muted">–</span>
+        <input type="number" inputmode="numeric" min="1" placeholder="max" value="${data.targets[e.exercise]?.max ?? ''}" data-f="tmax" data-i="${i}">
+      </div>
+      <div id="coach-${i}">${coachHTML(coach(e.exercise, w.id))}</div>
       <div class="set set-head"><span>#</span><span>Paino kg</span><span>Toistot</span><span>RPE</span><span></span></div>
       ${e.sets.map((s, j) => {
         const p = prev && prev.sets[j];
@@ -150,6 +208,7 @@ function entryHTML(e, i, w) {
           <button class="danger small" data-act="remove-set" data-i="${i}" data-j="${j}">✕</button>
         </div>`;
       }).join('')}
+      <div id="live-${i}" class="live">${esc(liveNote(e))}</div>
       <button class="small" data-act="add-set" data-i="${i}">+ Sarja</button>
       <textarea placeholder="Muistiinpano" data-f="note" data-i="${i}" style="margin-top:8px">${esc(e.note || '')}</textarea>
     </div>`;
@@ -208,6 +267,8 @@ function openHistory(exercise) {
   const h = history(exercise, null);
   modal.innerHTML = `<div class="sheet">
     <div class="row between"><h1>${esc(exercise)}</h1><button class="small" data-act="close-modal">Sulje</button></div>
+    ${data.targets[exercise] ? `<div class="muted">Tavoite: ${data.targets[exercise].min}–${data.targets[exercise].max} toistoa</div>` : ''}
+    ${coachHTML(coach(exercise, null))}
     ${h.length > 1 ? `
       <div class="tabs">
         <button class="small ${chartMetric === 'weight' ? 'active' : ''}" data-act="metric" data-m="weight" data-ex="${esc(exercise)}">Suurin paino</button>
@@ -308,6 +369,7 @@ const actions = {
     data.workouts.push(w);
     data.active = null;
     save(); go('home');
+    showSummary(w);
   },
   'cancel-workout': () => {
     if (!confirm('Hylätäänkö koko treeni? Tietoja ei tallenneta.')) return;
@@ -363,6 +425,17 @@ const actions = {
   }
 };
 
+// Treenin päätteeksi virtuaali-PT kertoo, mitä ensi kerralla kannattaa tehdä
+function showSummary(w) {
+  modal.innerHTML = `<div class="sheet">
+    <h1>Hyvä treeni! 💪</h1>
+    <h2>Virtuaali-PT: ensi kerralla</h2>
+    ${w.entries.map(e => `<div class="card"><b>${esc(e.exercise)}</b>${coachHTML(coach(e.exercise, null)) || '<div class="muted">Ei neuvoa.</div>'}</div>`).join('')}
+    <button class="primary full" data-act="close-modal">Sulje</button>
+  </div>`;
+  modal.classList.remove('hidden');
+}
+
 function moveTpl(i, dir) {
   editingTemplate.name = document.getElementById('tplName').value;
   const j = i + dir, arr = editingTemplate.exercises;
@@ -381,9 +454,17 @@ document.addEventListener('click', ev => {
 document.addEventListener('input', ev => {
   const el = ev.target;
   if (!el.dataset.f || !data.active) return;
-  const e = data.active.entries[+el.dataset.i];
+  const i = +el.dataset.i;
+  const e = data.active.entries[i];
   if (el.dataset.f === 'note') e.note = el.value;
-  else e.sets[+el.dataset.j][el.dataset.f] = num(el.value);
+  else if (el.dataset.f === 'tmin' || el.dataset.f === 'tmax') {
+    // Tavoitetoistoalue tallennetaan liikkeen nimen alle, joten se pätee kaikkiin treeneihin
+    const t = data.targets[e.exercise] || (data.targets[e.exercise] = { min: null, max: null });
+    t[el.dataset.f === 'tmin' ? 'min' : 'max'] = num(el.value);
+    if (!t.min && !t.max) delete data.targets[e.exercise];
+    document.getElementById('coach-' + i).innerHTML = coachHTML(coach(e.exercise, data.active.id));
+  } else e.sets[+el.dataset.j][el.dataset.f] = num(el.value);
+  document.getElementById('live-' + i).textContent = liveNote(e);
   save();
 });
 
@@ -398,7 +479,7 @@ document.addEventListener('change', ev => {
       const d = JSON.parse(reader.result);
       if (!Array.isArray(d.workouts) || !Array.isArray(d.templates)) throw new Error('Väärä tiedosto');
       if (!confirm('Nykyiset tiedot korvataan varmuuskopiolla. Jatketaanko?')) return;
-      data = Object.assign({ templates: [], workouts: [], active: null }, d);
+      data = Object.assign(emptyData(), d);
       save(); go('home');
     } catch (e) { alert('Tiedoston lukeminen epäonnistui.'); }
   };
