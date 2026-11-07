@@ -10,9 +10,19 @@ let data = load();
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) return Object.assign(emptyData(), JSON.parse(raw));
+    if (raw) return migrate(Object.assign(emptyData(), JSON.parse(raw)));
   } catch (e) { console.error('Latausvirhe', e); }
   return emptyData();
+}
+
+// Pohjan liike on olio { name, sets, min, max, weight }. Aiemmin pohjassa oli vain liikkeen nimi (teksti),
+// joten vanhat pohjat muunnetaan uuteen muotoon automaattisesti (3 sarjaa, ei toistoaluetta eikä painoa).
+function migrate(d) {
+  d.templates = (d.templates || []).map(t => ({
+    ...t,
+    exercises: (t.exercises || []).map(e => typeof e === 'string' ? { name: e, sets: 3, min: null, max: null, weight: null } : e)
+  }));
+  return d;
 }
 // targets = liikekohtaiset tavoitetoistoalueet, esim. { "Jalkaprässi": { min: 12, max: 15 } }
 // muscles = käyttäjän omat lihasryhmävalinnat liikkeille, esim. { "Oma liike": "Rinta" }
@@ -34,7 +44,7 @@ const num = v => (v === '' || v == null || isNaN(Number(v))) ? null : Number(v);
 // Kaikki tunnetut liikkeet (pohjista ja tehdyistä treeneistä) ehdotuslistaa varten
 function knownExercises() {
   const set = new Set();
-  data.templates.forEach(t => t.exercises.forEach(e => set.add(e)));
+  data.templates.forEach(t => t.exercises.forEach(e => set.add(e.name)));
   data.workouts.forEach(w => w.entries.forEach(e => set.add(e.exercise)));
   if (data.active) data.active.entries.forEach(e => set.add(e.exercise));
   return [...set].sort((a, b) => a.localeCompare(b, 'fi'));
@@ -148,11 +158,26 @@ function addToWorkout(name) {
   data.active.entries.push({ exercise: name, note: '', sets: [{ weight: null, reps: null, rpe: null }] });
   save(); render();
 }
+// Uuden pohjaliikkeen oletusarvot: käyttäjän tavoitetoistoalue, muuten ohjelmarunkojen suositus, muuten 3 sarjaa
+function templateExercise(name) {
+  const t = data.targets[name];
+  let sets = 3, min = t ? t.min : null, max = t ? t.max : null;
+  if (!t) {
+    const prog = PROGRAMS.flatMap(p => p.days.flatMap(d => d.exercises)).find(x => x[0] === name);
+    if (prog) { sets = prog[1]; min = prog[2]; max = prog[3]; }
+  }
+  return { name, sets, min, max, weight: null };
+}
 function addToTemplate(name) {
   if (!name) return;
   editingTemplate.name = document.getElementById('tplName').value;
-  editingTemplate.exercises.push(name);
+  editingTemplate.exercises.push(templateExercise(name));
   render();
+}
+// Pohjaliikkeen tiivistelmä, esim. "Penkkipunnerrus 3 × 6–10 @ 60 kg"
+function tplSummary(e) {
+  const reps = e.min && e.max ? ` × ${e.min}–${e.max}` : e.min || e.max ? ` × ${e.min || e.max}` : '';
+  return `${e.name} ${e.sets || 1}${reps}${e.weight != null ? ' @ ' + fmtN(e.weight) + ' kg' : ''}`;
 }
 
 // ---------- Ennätykset ----------
@@ -570,7 +595,7 @@ function templatesHTML() {
     <div class="row between"><h1>Treenipohjat</h1><button class="small" data-act="home">⬅ Takaisin</button></div>
     ${data.templates.map(t => `
       <div class="card row between">
-        <div class="grow"><b>${esc(t.name)}</b><div class="muted">${t.exercises.map(esc).join(', ')}</div></div>
+        <div class="grow"><b>${esc(t.name)}</b>${t.exercises.map(e => `<div class="muted">${esc(tplSummary(e))}</div>`).join('')}</div>
         <button class="small" data-act="edit-template" data-id="${t.id}">Muokkaa</button>
       </div>`).join('') || '<div class="muted">Ei vielä pohjia.</div>'}
     <button class="primary full" data-act="new-template">+ Uusi pohja</button>`;
@@ -583,12 +608,20 @@ function templateEditHTML() {
     <div class="card">
       <input id="tplName" placeholder="Pohjan nimi (esim. Ylävartalo A)" value="${esc(t.name)}">
     </div>
-    ${t.exercises.map((n, i) => `
-      <div class="card row">
-        <div class="grow"><b>${esc(n)}</b></div>
-        <button class="small" data-act="tpl-up" data-i="${i}">↑</button>
-        <button class="small" data-act="tpl-down" data-i="${i}">↓</button>
-        <button class="danger small" data-act="tpl-remove" data-i="${i}">✕</button>
+    ${t.exercises.map((e, i) => `
+      <div class="card">
+        <div class="row">
+          <div class="grow"><b>${esc(e.name)}</b></div>
+          <button class="small" data-act="tpl-up" data-i="${i}">↑</button>
+          <button class="small" data-act="tpl-down" data-i="${i}">↓</button>
+          <button class="danger small" data-act="tpl-remove" data-i="${i}">✕</button>
+        </div>
+        <div class="tplcfg">
+          <label>Sarjat<input type="number" inputmode="numeric" min="1" max="20" value="${e.sets ?? ''}" data-tf="sets" data-i="${i}"></label>
+          <label>Toistot min<input type="number" inputmode="numeric" min="1" value="${e.min ?? ''}" data-tf="min" data-i="${i}"></label>
+          <label>Toistot max<input type="number" inputmode="numeric" min="1" value="${e.max ?? ''}" data-tf="max" data-i="${i}"></label>
+          <label>Paino kg<input type="number" inputmode="decimal" step="any" placeholder="valinn." value="${e.weight ?? ''}" data-tf="weight" data-i="${i}"></label>
+        </div>
       </div>`).join('')}
     <div class="card">
       <input id="tplNewEx" data-suggest="template" autocomplete="off" placeholder="Hae liikettä (esim. penkki, kyykky)">
@@ -697,7 +730,19 @@ const actions = {
   'start-template': el => {
     if (data.active && !confirm('Käynnissä oleva treeni hylätään. Jatketaanko?')) return;
     const t = data.templates.find(x => x.id === el.dataset.id);
-    newWorkout(t.name, t.exercises);
+    data.active = {
+      id: uid(), name: t.name, date: new Date().toISOString(),
+      entries: t.exercises.map(e => ({
+        exercise: e.name, note: '',
+        // Pohjan sarjamäärän verran sarjoja. Jos pohjassa on paino, se täytetään valmiiksi himmeänä (pre):
+        // tekemättä jätetyt esitäytetyt sarjat poistuvat automaattisesti treeniä tallennettaessa.
+        sets: Array.from({ length: Math.max(1, e.sets || 1) }, () =>
+          e.weight != null ? { weight: e.weight, reps: null, rpe: null, pre: true } : { weight: null, reps: null, rpe: null })
+      }))
+    };
+    // Pohjaan asetettu toistoalue tulee liikkeen tavoitteeksi (virtuaali-PT käyttää sitä)
+    t.exercises.forEach(e => { if (e.min && e.max) data.targets[e.name] = { min: e.min, max: e.max }; });
+    save(); go('workout');
   },
   'start-program': el => {
     if (data.active && !confirm('Käynnissä oleva treeni hylätään. Jatketaanko?')) return;
@@ -807,7 +852,14 @@ const actions = {
   'save-as-template': () => {
     const name = prompt('Pohjan nimi:', data.active.name);
     if (!name) return;
-    data.templates.push({ id: uid(), name, exercises: data.active.entries.map(e => e.exercise) });
+    // Sarjamäärä, toistoalue ja suurin työpaino otetaan käynnissä olevasta treenistä
+    data.templates.push({ id: uid(), name, exercises: data.active.entries.map(e => {
+      const work = e.sets.filter(s => !s.warm && !s.pre);
+      const weights = work.map(s => s.weight).filter(w => w != null && w > 0);
+      const t = data.targets[e.exercise];
+      return { name: e.exercise, sets: Math.max(1, work.length), min: t ? t.min : null, max: t ? t.max : null,
+               weight: weights.length ? Math.max(...weights) : null };
+    }) });
     save(); alert('Pohja tallennettu.');
   },
   'history': el => openHistory(el.dataset.ex),
@@ -828,6 +880,12 @@ const actions = {
   'tpl-save': () => {
     editingTemplate.name = document.getElementById('tplName').value.trim();
     if (!editingTemplate.name) { alert('Anna pohjalle nimi.'); return; }
+    // Siistitään arvot: sarjoja 1–20, toistoalueen min ei saa olla suurempi kuin max
+    editingTemplate.exercises.forEach(e => {
+      e.sets = Math.min(20, Math.max(1, Math.round(e.sets || 1)));
+      if (e.min && e.max && e.min > e.max) [e.min, e.max] = [e.max, e.min];
+      if (e.weight != null && e.weight <= 0) e.weight = null;
+    });
     const idx = data.templates.findIndex(t => t.id === editingTemplate.id);
     if (idx >= 0) data.templates[idx] = editingTemplate; else data.templates.push(editingTemplate);
     save(); go('templates');
@@ -895,6 +953,11 @@ document.addEventListener('keydown', ev => {
 document.addEventListener('input', ev => {
   const el = ev.target;
   if (el.dataset.suggest) { showSuggest(el); return; }
+  // Pohjan liikkeen sarjat, toistoalue ja paino tallentuvat muokattavaan pohjaan heti kirjoitettaessa
+  if (el.dataset.tf && editingTemplate) {
+    editingTemplate.exercises[+el.dataset.i][el.dataset.tf] = num(el.value);
+    return;
+  }
   if (!el.dataset.f || !data.active) return;
   const i = +el.dataset.i;
   const e = data.active.entries[i];
@@ -949,7 +1012,7 @@ document.addEventListener('change', ev => {
       const d = JSON.parse(reader.result);
       if (!Array.isArray(d.workouts) || !Array.isArray(d.templates)) throw new Error('Väärä tiedosto');
       if (!confirm('Nykyiset tiedot korvataan varmuuskopiolla. Jatketaanko?')) return;
-      data = Object.assign(emptyData(), d);
+      data = migrate(Object.assign(emptyData(), d));
       save(); go('home');
     } catch (e) { alert('Tiedoston lukeminen epäonnistui.'); }
   };

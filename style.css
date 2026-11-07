@@ -55,6 +55,10 @@ textarea { resize: vertical; min-height: 44px; font-family: inherit; }
   padding: 8px 12px; display: flex; gap: 8px; align-items: center; justify-content: center;
 }
 .rest.hidden { display: none; }
+/* Pohjan liikkeen asetukset */
+.tplcfg { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+.tplcfg label { display: block; color: var(--muted); font-size: 0.75rem; }
+.tplcfg input { margin-top: 2px; padding: 8px 4px; text-align: center; font-size: 1rem; }
 .exlink { display: inline-block; color: var(--accent); font-size: 0.9rem; padding: 6px 0; text-decoration: underline; }
 /* Liikehaun ehdotuslista */
 .sugg { margin-top: 6px; }
