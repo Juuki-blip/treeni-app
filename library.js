@@ -183,3 +183,64 @@ function exrxLink(name, muscle) {
   if (EXRX_LISTS[muscle]) return { url: 'https://exrx.net/Lists/ExList/' + EXRX_LISTS[muscle], direct: false };
   return null;
 }
+
+// ---------- Toissijaiset lihasryhmät ----------
+// Liikkeen toissijaiset lihasryhmät. Tilastoissa jokainen työsarja lasketaan toissijaisille 0,5 sarjana.
+// Luettelo kattaa vain ne lihasryhmät, joita sovellus seuraa (rinta, selkä, olkapäät, hauis, ojentajat,
+// etu- ja takareidet, pakarat, pohkeet, vatsa). Liikkeet, joilla ei ole listassa mainintaa, ovat käytännössä eristäviä.
+const SECONDARY = {
+  // Rinta
+  'Penkkipunnerrus': ['Olkapäät', 'Ojentajat'],
+  'Penkkipunnerrus käsipainoilla': ['Olkapäät', 'Ojentajat'],
+  'Vinopenkkipunnerrus tangolla': ['Olkapäät', 'Ojentajat'],
+  'Vinopenkki käsipainoilla': ['Olkapäät', 'Ojentajat'],
+  'Alavinopenkki': ['Ojentajat', 'Olkapäät'],
+  'Rintaprässi': ['Olkapäät', 'Ojentajat'],
+  'Rintarist käsipainoilla': ['Olkapäät'],
+  'Rintarist taljalla': ['Olkapäät'],
+  'Rintarist laitteessa': ['Olkapäät'],
+  'Dipit': ['Ojentajat', 'Olkapäät'],
+  'Punnerrus': ['Olkapäät', 'Ojentajat'],
+  // Selkä
+  'Leuanveto': ['Hauis'],
+  'Avustettu leuanveto': ['Hauis'],
+  'Ylätalja': ['Hauis'],
+  'Kapea ylätalja': ['Hauis'],
+  'Alatalja soutu': ['Hauis', 'Olkapäät'],
+  'Kulmasoutu': ['Hauis', 'Olkapäät'],
+  'Käsipainosoutu': ['Hauis', 'Olkapäät'],
+  'Rintatuettu soutu': ['Hauis', 'Olkapäät'],
+  'T-tankosoutu': ['Hauis', 'Olkapäät'],
+  'Soutulaite': ['Hauis', 'Olkapäät'],
+  'Selänojennus': ['Pakarat', 'Takareidet'],
+  // Olkapäät
+  'Pystypunnerrus': ['Ojentajat', 'Rinta'],
+  'Pystypunnerrus käsipainoilla': ['Ojentajat', 'Rinta'],
+  'Olkapääprässi': ['Ojentajat', 'Rinta'],
+  'Arnold-punnerrus': ['Ojentajat'],
+  'Etunostot': ['Rinta'],
+  'Takaolkapää': ['Selkä'],
+  'Face pull': ['Selkä'],
+  'Pystysoutu': ['Selkä', 'Hauis'],
+  // Ojentajat
+  'Penkkipunnerrus ahdas ote': ['Rinta', 'Olkapäät'],
+  // Etureidet
+  'Takakyykky': ['Pakarat'],
+  'Etukyykky': ['Pakarat'],
+  'Jalkaprässi': ['Pakarat'],
+  'Bulgarialainen askelkyykky': ['Pakarat'],
+  'Askelkyykky': ['Pakarat'],
+  'Hack-kyykky': ['Pakarat'],
+  'Goblet-kyykky': ['Pakarat'],
+  'Askelnousu': ['Pakarat'],
+  'Smith-kyykky': ['Pakarat'],
+  // Takareidet
+  'Maastaveto': ['Pakarat', 'Selkä'],
+  'Romanian maastaveto': ['Pakarat', 'Selkä'],
+  'Suorin jaloin maastaveto': ['Pakarat', 'Selkä'],
+  'Sumo-maastaveto': ['Pakarat', 'Etureidet', 'Selkä'],
+  'Hyvää huomenta': ['Pakarat', 'Selkä'],
+  // Pakarat
+  'Lonkannosto': ['Takareidet'],
+  'Pakarasilta': ['Takareidet']
+};

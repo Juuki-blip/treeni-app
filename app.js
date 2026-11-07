@@ -16,7 +16,8 @@ function load() {
 }
 // targets = liikekohtaiset tavoitetoistoalueet, esim. { "Jalkaprässi": { min: 12, max: 15 } }
 // muscles = käyttäjän omat lihasryhmävalinnat liikkeille, esim. { "Oma liike": "Rinta" }
-function emptyData() { return { templates: [], workouts: [], active: null, targets: {}, muscles: {} }; }
+// secondary = käyttäjän omat toissijaiset lihasryhmät liikkeille, esim. { "Oma liike": ["Olkapäät"] }
+function emptyData() { return { templates: [], workouts: [], active: null, targets: {}, muscles: {}, secondary: {} }; }
 function save() {
   localStorage.setItem(KEY, JSON.stringify(data));
 }
@@ -78,6 +79,15 @@ function muscleOf(name) {
   const n = name.toLowerCase();
   const hit = MUSCLE_RULES.find(([re]) => re.test(n));
   return hit ? hit[1] : 'Muut';
+}
+
+// Toissijaiset lihasryhmät: käyttäjän oma valinta menee kirjaston oletuksen edelle.
+// Pääasiallinen lihasryhmä suodatetaan pois, ettei sama ryhmä lasketa kahdesti.
+function secondaryOf(name) {
+  const own = data.secondary && data.secondary[name];
+  const list = Array.isArray(own) ? own : (SECONDARY[name] || []);
+  const primary = muscleOf(name);
+  return list.filter(m => m !== primary);
 }
 
 // ---------- Liikehaku ----------
@@ -202,14 +212,19 @@ function weekRange(offset) {
   const end = new Date(d); end.setDate(end.getDate() + 7);
   return [d, end];
 }
-// Työsarjat lihasryhmittäin valitulla viikolla (lämmittelysarjat eivät lasketa)
+// Työsarjat lihasryhmittäin valitulla viikolla (lämmittelysarjat eivät lasketa).
+// Palauttaa { lihasryhmä: { p: pääasialliset sarjat, s: toissijaiset (0,5 / sarja) } }
+const SECONDARY_WEIGHT = 0.5;
 function weeklyVolume(offset) {
   const [start, end] = weekRange(offset);
   const vol = {};
+  const add = (m, key, n) => { (vol[m] = vol[m] || { p: 0, s: 0 })[key] += n; };
   data.workouts.filter(w => new Date(w.date) >= start && new Date(w.date) < end).forEach(w =>
     w.entries.forEach(e => {
       const n = e.sets.filter(s => !s.warm && (s.weight != null || s.reps != null)).length;
-      if (n) vol[muscleOf(e.exercise)] = (vol[muscleOf(e.exercise)] || 0) + n;
+      if (!n) return;
+      add(muscleOf(e.exercise), 'p', n);
+      secondaryOf(e.exercise).forEach(m => add(m, 's', n * SECONDARY_WEIGHT));
     }));
   return vol;
 }
@@ -434,7 +449,7 @@ function statsHTML() {
   const [start, end] = weekRange(statsWeek);
   const last = new Date(end); last.setDate(last.getDate() - 1);
   const d = x => `${x.getDate()}.${x.getMonth() + 1}.`;
-  const groups = ALL_MUSCLES.filter(m => MAIN_MUSCLES.includes(m) || vol[m]);
+  const groups = ALL_MUSCLES.filter(m => MAIN_MUSCLES.includes(m) || (vol[m] && vol[m].p + vol[m].s));
   const MAX = 25; // palkin täysi leveys sarjoina
   const prs = allPRs().slice(0, 12);
   return `
@@ -447,14 +462,17 @@ function statsHTML() {
     </div>
     <div class="card" style="margin-top:8px">
       ${groups.map(m => {
-        const n = vol[m] || 0;
+        const p = vol[m] ? vol[m].p : 0, s = vol[m] ? vol[m].s : 0, n = p + s;
         const cls = n >= 10 && n <= 20 ? 'ok' : n > 20 ? 'high' : 'low';
+        const w = x => Math.min(100, x / MAX * 100);
+        // Palkin tumma osa = pääasialliset sarjat, vaalea osa = toissijaiset (0,5 / sarja)
         return `<div class="vrow"><span class="vname">${m}</span>
-          <div class="vbar"><div class="vfill ${cls}" style="width:${Math.min(100, n / MAX * 100)}%"></div>
+          <div class="vbar"><div class="vfill ${cls}" style="width:${w(p)}%"></div>
+            <div class="vfill sec ${cls}" style="left:${w(p)}%;width:${Math.max(0, w(n) - w(p))}%"></div>
             <i style="left:${10 / MAX * 100}%"></i><i style="left:${20 / MAX * 100}%"></i></div>
-          <span class="vnum">${n}</span></div>`;
+          <span class="vnum" title="${fmtN(p)} pääasiallista + ${fmtN(s)} toissijaista">${fmtN(n)}</span></div>`;
       }).join('')}
-      <p class="muted" style="margin-bottom:0">Viivat kohdissa 10 ja 20 sarjaa. Tutkimusten mukaan noin 10–20 kovaa sarjaa lihasryhmää kohden viikossa riittää useimmille lihaskasvuun. Lämmittelysarjoja ei lasketa. Perusliike lasketaan sen pääasialliselle lihasryhmälle. Voit vaihtaa liikkeen lihasryhmän liikkeen nimestä avautuvasta ikkunasta.</p>
+      <p class="muted" style="margin-bottom:0">Viivat kohdissa 10 ja 20 sarjaa. Tutkimusten mukaan noin 10–20 kovaa sarjaa lihasryhmää kohden viikossa riittää useimmille lihaskasvuun. Lämmittelysarjoja ei lasketa. Jokainen sarja lasketaan kokonaan liikkeen pääasialliselle lihasryhmälle ja puolikkaana toissijaisille (esim. penkkipunnerruksen sarja: 1 rinta, 0,5 olkapäät, 0,5 ojentajat). Palkin vaalea osa on toissijaisten osuus. Voit muokata liikkeen lihasryhmiä liikkeen nimestä avautuvassa ikkunassa.</p>
     </div>
     <h2>Viimeisimmät ennätykset</h2>
     ${prs.map(p => `<div class="card"><b>🏆 ${esc(p.exercise)}</b>
@@ -497,6 +515,7 @@ function entryHTML(e, i, w) {
         <button class="link" data-act="history" data-ex="${esc(e.exercise)}">${esc(e.exercise)}</button>
         <button class="danger small" data-act="remove-exercise" data-i="${i}">Poista</button>
       </div>
+      <div class="mu2">${esc(muscleOf(e.exercise))}${secondaryOf(e.exercise).length ? ' · toissijaiset: ' + secondaryOf(e.exercise).map(esc).join(', ') : ''}</div>
       ${exrxHTML(e.exercise)}
       <div class="prev">${prev
         ? `Edellinen (${fmtDate(prev.date)}): ${prev.sets.map(fmtSet).join(', ')}${prev.note ? '<br>📝 ' + esc(prev.note) : ''}`
@@ -601,6 +620,11 @@ function openHistory(exercise) {
       <select data-muscle-for="${esc(exercise)}">
         ${ALL_MUSCLES.map(m => `<option ${m === muscleOf(exercise) ? 'selected' : ''}>${m}</option>`).join('')}
       </select>
+    </div>
+    <div class="muted">Toissijaiset lihasryhmät (lasketaan 0,5 sarjana)</div>
+    <div class="chips">
+      ${[...MAIN_MUSCLES, 'Vatsa'].filter(m => m !== muscleOf(exercise)).map(m => `
+        <label class="chip"><input type="checkbox" data-sec-for="${esc(exercise)}" value="${m}" ${secondaryOf(exercise).includes(m) ? 'checked' : ''}> ${m}</label>`).join('')}
     </div>
     ${h.length > 1 ? `
       <div class="tabs">
@@ -887,7 +911,17 @@ document.addEventListener('input', ev => {
 document.addEventListener('change', ev => {
   // Lihasryhmän valinta liikkeen historiaikkunassa
   if (ev.target.dataset.muscleFor) {
-    data.muscles[ev.target.dataset.muscleFor] = ev.target.value;
+    const ex = ev.target.dataset.muscleFor;
+    data.muscles[ex] = ev.target.value;
+    save();
+    openHistory(ex); // piirretään uudelleen, jotta toissijaisten valinnoista poistuu uusi pääryhmä
+    return;
+  }
+  // Toissijaisten lihasryhmien valinta: tallennetaan koko valintalista liikkeelle
+  if (ev.target.dataset.secFor) {
+    const ex = ev.target.dataset.secFor;
+    data.secondary[ex] = [...document.querySelectorAll('[data-sec-for]')]
+      .filter(c => c.dataset.secFor === ex && c.checked).map(c => c.value);
     save();
     return;
   }
