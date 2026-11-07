@@ -15,7 +15,8 @@ function load() {
   return emptyData();
 }
 // targets = liikekohtaiset tavoitetoistoalueet, esim. { "Jalkaprässi": { min: 12, max: 15 } }
-function emptyData() { return { templates: [], workouts: [], active: null, targets: {} }; }
+// muscles = käyttäjän omat lihasryhmävalinnat liikkeille, esim. { "Oma liike": "Rinta" }
+function emptyData() { return { templates: [], workouts: [], active: null, targets: {}, muscles: {} }; }
 function save() {
   localStorage.setItem(KEY, JSON.stringify(data));
 }
@@ -51,6 +52,102 @@ function history(exercise, excludeId) {
 const fmtSet = s => `${s.warm ? 'L ' : ''}${s.weight ?? '?'} kg × ${s.reps ?? '?'}${s.rpe != null ? ' @' + s.rpe : ''}`;
 // Arvioitu yhden toiston maksimi (Epleyn kaava)
 const e1rm = s => (s.weight && s.reps) ? s.weight * (1 + s.reps / 30) : 0;
+
+// ---------- Lihasryhmät ----------
+const MAIN_MUSCLES = ['Rinta', 'Selkä', 'Olkapäät', 'Hauis', 'Ojentajat', 'Etureidet', 'Takareidet', 'Pakarat', 'Pohkeet'];
+const ALL_MUSCLES = [...MAIN_MUSCLES, 'Vatsa', 'Muut'];
+
+// Arvaa lihasryhmän liikkeen nimestä. Säännöt käydään läpi järjestyksessä, ensimmäinen osuma voittaa.
+const MUSCLE_RULES = [
+  [/jalkakoukistus|leg curl|romanian|suorin jaloin|maastaveto|hyvää huomenta/, 'Takareidet'],
+  [/lonkannosto|hip thrust|pakara|glute/, 'Pakarat'],
+  [/pohje|pohkee|calf/, 'Pohkeet'],
+  [/kyykky|jalkaprässi|jalan ojennus|askel|leg press|lunge|hack|jalkaojennus/, 'Etureidet'],
+  [/pysty|olka|sivunost|takaolka|face pull|arnold|lateral/, 'Olkapäät'],
+  [/penkki|rinta|dippi|pec|fly|rist/, 'Rinta'],
+  [/ojentaja|ranskalainen|tricep|pushdown/, 'Ojentajat'],
+  [/hauis|kääntö|curl/, 'Hauis'],
+  [/vatsa|crunch|plank|lankku/, 'Vatsa'],
+  [/veto|soutu|leuka|talja|lat |rowing|pull/, 'Selkä']
+];
+// Käyttäjän oma valinta (data.muscles) menee arvauksen edelle
+function muscleOf(name) {
+  if (data.muscles && data.muscles[name]) return data.muscles[name];
+  const n = name.toLowerCase();
+  const hit = MUSCLE_RULES.find(([re]) => re.test(n));
+  return hit ? hit[1] : 'Muut';
+}
+
+// ---------- Ennätykset ----------
+// Vertaa liikkeen sarjoja aiempiin kertoihin (prevSessions). Palauttaa listan ennätysteksteistä.
+// Ensimmäinen kerta liikkeellä ei ole ennätys, koska vertailukohtaa ei ole.
+function prsFor(exercise, sets, prevSessions) {
+  if (!prevSessions.length) return [];
+  const ok = s => !s.warm && !s.pre && s.weight > 0 && s.reps > 0;
+  const cur = sets.filter(ok);
+  if (!cur.length) return [];
+  const prev = prevSessions.flatMap(x => x.sets).filter(ok);
+  if (!prev.length) return [];
+
+  const prevMaxW = Math.max(...prev.map(s => s.weight));
+  const curMaxW = Math.max(...cur.map(s => s.weight));
+  if (curMaxW > prevMaxW) return [`Painoennätys ${fmtN(curMaxW)} kg (aiempi ${fmtN(prevMaxW)} kg)`];
+
+  // Arvioitu 1RM on luotettava vain melko pienillä toistoilla
+  const best = arr => Math.max(0, ...arr.filter(s => s.reps <= 12).map(e1rm));
+  const prevE = best(prev), curE = best(cur);
+  if (curE > prevE + 0.01) return [`1RM-ennätys (arvio ${fmtN(Math.round(curE * 10) / 10)} kg, aiempi ${fmtN(Math.round(prevE * 10) / 10)} kg)`];
+
+  // Toistoennätys: enemmän toistoja kuin koskaan samalla tai raskaammalla painolla
+  let repPr = null;
+  for (const s of cur) {
+    const prevReps = Math.max(0, ...prev.filter(p => p.weight >= s.weight).map(p => p.reps));
+    if (s.reps > prevReps && (!repPr || s.weight > repPr.weight)) repPr = s;
+  }
+  return repPr ? [`Toistoennätys ${repPr.reps} × ${fmtN(repPr.weight)} kg`] : [];
+}
+
+// Kaikki ennätykset historiasta, uusin ensin (tilastosivua varten)
+function allPRs() {
+  const sorted = [...data.workouts].sort((a, b) => a.date.localeCompare(b.date));
+  const out = [];
+  sorted.forEach(w => w.entries.forEach(e => {
+    const before = sorted.filter(x => x.date < w.date)
+      .map(x => x.entries.find(y => y.exercise === e.exercise)).filter(Boolean);
+    prsFor(e.exercise, e.sets, before).forEach(text => out.push({ date: w.date, exercise: e.exercise, text }));
+  }));
+  return out.reverse();
+}
+
+// Kesken treenin näkyvä ilmoitus: ennätys ja/tai tavoitteen täyttyminen
+function liveNote(entry) {
+  const parts = [];
+  const pr = prsFor(entry.exercise, entry.sets, history(entry.exercise, data.active ? data.active.id : null));
+  if (pr.length) parts.push('🏆 ' + pr[0] + '!');
+  const t = targetNote(entry);
+  if (t) parts.push(t);
+  return parts.join(' ');
+}
+
+// ---------- Viikkovolyymi ----------
+let statsWeek = 0; // 0 = tämä viikko, -1 = edellinen jne.
+function weekRange(offset) {
+  const d = new Date(); d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7) + offset * 7); // maanantai
+  const end = new Date(d); end.setDate(end.getDate() + 7);
+  return [d, end];
+}
+// Työsarjat lihasryhmittäin valitulla viikolla (lämmittelysarjat eivät lasketa)
+function weeklyVolume(offset) {
+  const [start, end] = weekRange(offset);
+  const vol = {};
+  data.workouts.filter(w => new Date(w.date) >= start && new Date(w.date) < end).forEach(w =>
+    w.entries.forEach(e => {
+      const n = e.sets.filter(s => !s.warm && (s.weight != null || s.reps != null)).length;
+      if (n) vol[muscleOf(e.exercise)] = (vol[muscleOf(e.exercise)] || 0) + n;
+    }));
+  return vol;
+}
 
 // ---------- Virtuaali-PT ----------
 const WEIGHT_STEP = 2.5; // kuinka paljon painoa ehdotetaan lisättäväksi kerralla (kg)
@@ -99,7 +196,7 @@ function coach(exercise, excludeId) {
 }
 
 // Reaaliaikainen kehu kesken treenin, kun kaikki sarjat suurimmalla painolla yltävät tavoitteen ylärajaan
-function liveNote(entry) {
+function targetNote(entry) {
   const t = data.targets[entry.exercise];
   if (!t || !t.max) return '';
   const sets = entry.sets.filter(s => !s.warm && s.weight != null && s.reps != null);
@@ -200,6 +297,7 @@ function render() {
   else if (view === 'templates') app.innerHTML = templatesHTML();
   else if (view === 'templateEdit') app.innerHTML = templateEditHTML();
   else if (view === 'settings') app.innerHTML = settingsHTML();
+  else if (view === 'stats') app.innerHTML = statsHTML();
   window.scrollTo(0, y);
   updateWake();
   if (rest) tickRest(); // piirretään ajastin uudelleen, jos se on käynnissä
@@ -251,7 +349,41 @@ function homeHTML() {
         ${w.entries.map(e => `<div class="muted">${esc(e.exercise)}: ${e.sets.map(fmtSet).join(', ')}</div>`).join('')}
       </div>`).join('') || '<div class="muted">Ei vielä tehtyjä treenejä.</div>'}
 
-    <button class="full" data-act="settings" style="margin-top:12px">⚙️ Varmuuskopio</button>`;
+    <button class="full" data-act="stats" style="margin-top:12px">📊 Tilastot ja ennätykset</button>
+    <button class="full" data-act="settings" style="margin-top:8px">⚙️ Varmuuskopio</button>`;
+}
+
+function statsHTML() {
+  const vol = weeklyVolume(statsWeek);
+  const [start, end] = weekRange(statsWeek);
+  const last = new Date(end); last.setDate(last.getDate() - 1);
+  const d = x => `${x.getDate()}.${x.getMonth() + 1}.`;
+  const groups = ALL_MUSCLES.filter(m => MAIN_MUSCLES.includes(m) || vol[m]);
+  const MAX = 25; // palkin täysi leveys sarjoina
+  const prs = allPRs().slice(0, 12);
+  return `
+    <div class="row between"><h1>Tilastot</h1><button class="small" data-act="home">⬅ Takaisin</button></div>
+    <h2>Sarjat lihasryhmittäin</h2>
+    <div class="row between">
+      <button class="small" data-act="week" data-d="-1">◀</button>
+      <b>${statsWeek === 0 ? 'Tämä viikko' : 'Viikko'} ${d(start)}–${d(last)}</b>
+      <button class="small" data-act="week" data-d="1" ${statsWeek >= 0 ? 'disabled' : ''}>▶</button>
+    </div>
+    <div class="card" style="margin-top:8px">
+      ${groups.map(m => {
+        const n = vol[m] || 0;
+        const cls = n >= 10 && n <= 20 ? 'ok' : n > 20 ? 'high' : 'low';
+        return `<div class="vrow"><span class="vname">${m}</span>
+          <div class="vbar"><div class="vfill ${cls}" style="width:${Math.min(100, n / MAX * 100)}%"></div>
+            <i style="left:${10 / MAX * 100}%"></i><i style="left:${20 / MAX * 100}%"></i></div>
+          <span class="vnum">${n}</span></div>`;
+      }).join('')}
+      <p class="muted" style="margin-bottom:0">Viivat kohdissa 10 ja 20 sarjaa. Tutkimusten mukaan noin 10–20 kovaa sarjaa lihasryhmää kohden viikossa riittää useimmille lihaskasvuun. Lämmittelysarjoja ei lasketa. Perusliike lasketaan sen pääasialliselle lihasryhmälle. Voit vaihtaa liikkeen lihasryhmän liikkeen nimestä avautuvasta ikkunasta.</p>
+    </div>
+    <h2>Viimeisimmät ennätykset</h2>
+    ${prs.map(p => `<div class="card"><b>🏆 ${esc(p.exercise)}</b>
+      <div>${esc(p.text)}</div><div class="muted">${fmtDate(p.date)}</div></div>`).join('')
+      || '<div class="muted">Ennätyksiä ilmestyy, kun olet tehnyt saman liikkeen vähintään kahdesti.</div>'}`;
 }
 
 function workoutHTML() {
@@ -385,6 +517,12 @@ function openHistory(exercise) {
     <div class="row between"><h1>${esc(exercise)}</h1><button class="small" data-act="close-modal">Sulje</button></div>
     ${data.targets[exercise] ? `<div class="muted">Tavoite: ${data.targets[exercise].min}–${data.targets[exercise].max} toistoa</div>` : ''}
     ${coachHTML(coach(exercise, null))}
+    <div class="row" style="margin:8px 0">
+      <span class="muted">Lihasryhmä (tilastoihin)</span>
+      <select data-muscle-for="${esc(exercise)}">
+        ${ALL_MUSCLES.map(m => `<option ${m === muscleOf(exercise) ? 'selected' : ''}>${m}</option>`).join('')}
+      </select>
+    </div>
     ${h.length > 1 ? `
       <div class="tabs">
         <button class="small ${chartMetric === 'weight' ? 'active' : ''}" data-act="metric" data-m="weight" data-ex="${esc(exercise)}">Suurin paino</button>
@@ -600,6 +738,8 @@ const actions = {
 
   // Varmuuskopio
   'settings': () => go('settings'),
+  'stats': () => { statsWeek = 0; go('stats'); },
+  'week': el => { statsWeek = Math.min(0, statsWeek + +el.dataset.d); render(); },
   'export': () => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
@@ -614,7 +754,12 @@ function showSummary(w) {
   modal.innerHTML = `<div class="sheet">
     <h1>Hyvä treeni! 💪</h1>
     <h2>Virtuaali-PT: ensi kerralla</h2>
-    ${w.entries.map(e => `<div class="card"><b>${esc(e.exercise)}</b>${coachHTML(coach(e.exercise, null)) || '<div class="muted">Ei neuvoa.</div>'}</div>`).join('')}
+    ${w.entries.map(e => {
+      const pr = prsFor(e.exercise, e.sets, history(e.exercise, w.id));
+      return `<div class="card"><b>${esc(e.exercise)}</b>
+        ${pr.map(t => `<div class="pr">🏆 ${esc(t)}</div>`).join('')}
+        ${coachHTML(coach(e.exercise, null)) || '<div class="muted">Ei neuvoa.</div>'}</div>`;
+    }).join('')}
     <button class="primary full" data-act="close-modal">Sulje</button>
   </div>`;
   modal.classList.remove('hidden');
@@ -659,6 +804,12 @@ document.addEventListener('input', ev => {
 
 // Varmuuskopion palautus
 document.addEventListener('change', ev => {
+  // Lihasryhmän valinta liikkeen historiaikkunassa
+  if (ev.target.dataset.muscleFor) {
+    data.muscles[ev.target.dataset.muscleFor] = ev.target.value;
+    save();
+    return;
+  }
   if (ev.target.id !== 'importFile') return;
   const file = ev.target.files[0];
   if (!file) return;
