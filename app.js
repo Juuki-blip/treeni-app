@@ -48,7 +48,7 @@ function history(exercise, excludeId) {
     .filter(Boolean);
 }
 
-const fmtSet = s => `${s.weight ?? '?'} kg × ${s.reps ?? '?'}${s.rpe != null ? ' @' + s.rpe : ''}`;
+const fmtSet = s => `${s.warm ? 'L ' : ''}${s.weight ?? '?'} kg × ${s.reps ?? '?'}${s.rpe != null ? ' @' + s.rpe : ''}`;
 // Arvioitu yhden toiston maksimi (Epleyn kaava)
 const e1rm = s => (s.weight && s.reps) ? s.weight * (1 + s.reps / 30) : 0;
 
@@ -64,7 +64,7 @@ function coach(exercise, excludeId) {
   const t = data.targets[exercise];
   if (!t || !t.min || !t.max) return { type: 'info', text: 'Aseta liikkeelle tavoitetoistoalue, niin virtuaali-PT osaa neuvoa.' };
 
-  const sets = h.sets.filter(s => s.weight != null && s.reps != null);
+  const sets = h.sets.filter(s => !s.warm && s.weight != null && s.reps != null); // lämmittelysarjat eivät vaikuta neuvoon
   if (!sets.length) return null;
   // Katsotaan vain suurimmalla painolla tehtyjä sarjoja (kevyemmät ovat yleensä lämmittelyä)
   const top = Math.max(...sets.map(s => s.weight));
@@ -102,7 +102,7 @@ function coach(exercise, excludeId) {
 function liveNote(entry) {
   const t = data.targets[entry.exercise];
   if (!t || !t.max) return '';
-  const sets = entry.sets.filter(s => s.weight != null && s.reps != null);
+  const sets = entry.sets.filter(s => !s.warm && s.weight != null && s.reps != null);
   if (!sets.length) return '';
   const top = Math.max(...sets.map(s => s.weight));
   const topSets = sets.filter(s => s.weight === top);
@@ -124,12 +124,85 @@ const modal = document.getElementById('modal');
 
 function go(v) { view = v; render(); window.scrollTo(0, 0); }
 
+// ---------- Lepoajastin ----------
+// Ajastin perustuu loppuaikaan (ei sekunnin laskemiseen), joten se pysyy oikeassa, vaikka puhelin
+// välillä nukuttaisi sivua.
+let rest = null;          // { end: aikaleima millisekunteina } tai null
+let restTimer = null;
+
+// Oletuslepo tavoitetoistoalueen mukaan: raskaat perusliikkeet vaativat pidemmän levon
+function restSeconds(exercise, warm) {
+  if (warm) return 60;
+  const t = data.targets[exercise];
+  if (!t || !t.max) return 120;
+  if (t.max <= 10) return 180;
+  if (t.max <= 15) return 120;
+  return 90;
+}
+function startRest(sec) {
+  rest = { end: Date.now() + sec * 1000 };
+  clearInterval(restTimer);
+  restTimer = setInterval(tickRest, 250);
+  tickRest();
+}
+function stopRest() {
+  rest = null; clearInterval(restTimer); restTimer = null;
+  const el = document.getElementById('rest'); if (el) el.classList.add('hidden');
+}
+function tickRest() {
+  const el = document.getElementById('rest');
+  if (!rest) return;
+  const left = Math.ceil((rest.end - Date.now()) / 1000);
+  if (left <= 0) {
+    if (navigator.vibrate) navigator.vibrate([300, 120, 300]);
+    stopRest();
+    // Näytetään hetken ajan, että lepo on ohi
+    const e2 = document.getElementById('rest');
+    if (e2) { e2.classList.remove('hidden'); e2.innerHTML = '<b>✅ Lepo ohi, seuraava sarja!</b>'; setTimeout(() => { if (!rest) e2.classList.add('hidden'); }, 3000); }
+    return;
+  }
+  if (!el) return;
+  el.classList.remove('hidden');
+  const m = Math.floor(left / 60), s = String(left % 60).padStart(2, '0');
+  el.innerHTML = `<b>⏱ Lepo ${m}:${s}</b>
+    <button class="small" data-act="rest-add" data-s="-15">−15 s</button>
+    <button class="small" data-act="rest-add" data-s="15">+15 s</button>
+    <button class="small" data-act="rest-stop">Ohita</button>`;
+}
+
+// ---------- Näyttö pysyy päällä treenin aikana ----------
+let wakeLock = null;
+async function updateWake() {
+  const want = view === 'workout' && !!data.active;
+  try {
+    if (want && !wakeLock && 'wakeLock' in navigator) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } else if (!want && wakeLock) {
+      await wakeLock.release(); wakeLock = null;
+    }
+  } catch (e) { /* ei tuettu tai estetty, ei haittaa */ }
+}
+// Selain vapauttaa lukon, kun sivu menee taustalle: haetaan se takaisin paluun yhteydessä
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') updateWake(); });
+
+// ---------- Pysyvä tallennus ----------
+// Pyydetään selainta merkitsemään tiedot pysyviksi, ettei Android siivoa niitä pois tilan loppuessa
+let persisted = null;
+if (navigator.storage && navigator.storage.persist) {
+  navigator.storage.persist().then(ok => { persisted = ok; }).catch(() => {});
+}
+
 function render() {
+  const y = window.scrollY; // pidetään vierityskohta, kun sivu piirretään uudelleen
   if (view === 'home') app.innerHTML = homeHTML();
   else if (view === 'workout') app.innerHTML = workoutHTML();
   else if (view === 'templates') app.innerHTML = templatesHTML();
   else if (view === 'templateEdit') app.innerHTML = templateEditHTML();
   else if (view === 'settings') app.innerHTML = settingsHTML();
+  window.scrollTo(0, y);
+  updateWake();
+  if (rest) tickRest(); // piirretään ajastin uudelleen, jos se on käynnissä
 }
 
 // ---------- Näkymät ----------
@@ -202,6 +275,7 @@ function workoutHTML() {
       <button class="grow" data-act="save-as-template">Tallenna pohjaksi</button>
       <button class="danger" data-act="cancel-workout">Hylkää treeni</button>
     </div>
+    <div id="rest" class="rest hidden"></div>
     <div class="bottom-bar"><div class="inner">
       <button class="primary grow" data-act="finish">✔ Valmis, tallenna treeni</button>
     </div></div>`;
@@ -225,19 +299,32 @@ function entryHTML(e, i, w) {
         <input type="number" inputmode="numeric" min="1" placeholder="max" value="${data.targets[e.exercise]?.max ?? ''}" data-f="tmax" data-i="${i}">
       </div>
       <div id="coach-${i}">${coachHTML(coach(e.exercise, w.id))}</div>
-      <div class="set set-head"><span>#</span><span>Paino kg</span><span>Toistot</span><span>RPE</span><span></span></div>
-      ${e.sets.map((s, j) => {
-        const p = prev && prev.sets[j];
-        return `<div class="set">
-          <span class="n">${j + 1}</span>
+      <div class="set set-head"><span>#</span><span>Paino kg</span><span>Toistot</span><span>RPE</span><span>✓</span><span></span></div>
+      ${(() => {
+        // Lasketaan erikseen lämmittely- ja työsarjojen järjestysnumerot,
+        // ja haetaan edellisen kerran vastaava sarja haamutekstiksi
+        let w = 0, k = 0;
+        const prevWarm = prev ? prev.sets.filter(x => x.warm) : [];
+        const prevWork = prev ? prev.sets.filter(x => !x.warm) : [];
+        return e.sets.map((s, j) => {
+          const p = s.warm ? prevWarm[w] : prevWork[k];
+          s.warm ? w++ : k++;
+          return `<div class="set ${s.pre ? 'pre' : ''}">
+          <button class="n-btn ${s.warm ? 'warm' : ''}" data-act="toggle-warm" data-i="${i}" data-j="${j}" title="Vaihda lämmittelysarjaksi">${s.warm ? 'L' : k}</button>
           <input type="number" inputmode="decimal" step="any" placeholder="${p?.weight ?? ''}" value="${s.weight ?? ''}" data-f="weight" data-i="${i}" data-j="${j}">
           <input type="number" inputmode="numeric" step="1" placeholder="${p?.reps ?? ''}" value="${s.reps ?? ''}" data-f="reps" data-i="${i}" data-j="${j}">
           <input type="number" inputmode="decimal" step="0.5" min="1" max="10" placeholder="${p?.rpe ?? ''}" value="${s.rpe ?? ''}" data-f="rpe" data-i="${i}" data-j="${j}">
+          <button class="check ${s.done ? 'on' : ''}" data-act="done-set" data-i="${i}" data-j="${j}">✓</button>
           <button class="danger small" data-act="remove-set" data-i="${i}" data-j="${j}">✕</button>
         </div>`;
-      }).join('')}
+        }).join('');
+      })()}
       <div id="live-${i}" class="live">${esc(liveNote(e))}</div>
-      <button class="small" data-act="add-set" data-i="${i}">+ Sarja</button>
+      <div class="row" style="flex-wrap:wrap">
+        <button class="small" data-act="add-set" data-i="${i}">+ Sarja</button>
+        <button class="small" data-act="add-warm" data-i="${i}">+ Lämmittely</button>
+        ${prev ? `<button class="small" data-act="fill-prev" data-i="${i}">Täytä edellisestä</button>` : ''}
+      </div>
       <textarea placeholder="Muistiinpano" data-f="note" data-i="${i}" style="margin-top:8px">${esc(e.note || '')}</textarea>
     </div>`;
 }
@@ -282,6 +369,7 @@ function settingsHTML() {
   return `
     <div class="row between"><h1>Varmuuskopio</h1><button class="small" data-act="home">⬅ Takaisin</button></div>
     <div class="card">
+      <p class="muted">Pysyvä tallennus: ${persisted === true ? 'käytössä ✅' : 'ei varmistettu (selain voi tyhjentää tiedot, jos tila loppuu), joten lataa varmuuskopio säännöllisesti'}.</p>
       <p class="muted">Tiedot ovat vain tämän puhelimen selaimessa. Lataa varmuuskopio silloin tällöin, niin et menetä historiaa, jos puhelin vaihtuu tai selaimen tiedot tyhjennetään.</p>
       <button class="primary full" data-act="export">Lataa varmuuskopio (tiedosto)</button>
       <p></p>
@@ -313,12 +401,15 @@ function openHistory(exercise) {
 
 // Piirtää viivakaavion SVG:nä (ei ulkoisia kirjastoja)
 function chartSVG(h) {
-  const pts = [...h].reverse().map(x => ({
-    date: x.date,
-    v: chartMetric === 'weight'
-      ? Math.max(0, ...x.sets.map(s => s.weight || 0))
-      : Math.max(0, ...x.sets.map(e1rm))
-  }));
+  const pts = [...h].reverse().map(x => {
+    const work = x.sets.filter(s => !s.warm); // lämmittelysarjat pois kaaviosta
+    return {
+      date: x.date,
+      v: chartMetric === 'weight'
+        ? Math.max(0, ...work.map(s => s.weight || 0))
+        : Math.max(0, ...work.map(e1rm))
+    };
+  });
   const W = 340, H = 180, L = 40, R = 12, T = 14, B = 26;
   const min = Math.min(...pts.map(p => p.v)), max = Math.max(...pts.map(p => p.v));
   const lo = min === max ? min - 1 : min, hi = min === max ? max + 1 : max;
@@ -406,8 +497,43 @@ const actions = {
     const e = data.active.entries[+el.dataset.i];
     const last = e.sets[e.sets.length - 1];
     // Uusi sarja kopioi edellisen sarjan arvot, jotta ei tarvitse kirjoittaa samoja uudelleen
-    e.sets.push(last ? { ...last } : { weight: null, reps: null, rpe: null });
+    // Merkinnät (lämmittely, valmis, esitäytetty) eivät kopioidu
+    e.sets.push(last ? { weight: last.weight, reps: last.reps, rpe: last.rpe } : { weight: null, reps: null, rpe: null });
     save(); render();
+  },
+  'add-warm': el => {
+    const e = data.active.entries[+el.dataset.i];
+    // Lämmittelysarja lisätään työsarjojen eteen, muiden lämmittelysarjojen jatkeeksi
+    let idx = 0;
+    while (idx < e.sets.length && e.sets[idx].warm) idx++;
+    e.sets.splice(idx, 0, { weight: null, reps: null, rpe: null, warm: true });
+    save(); render();
+  },
+  'toggle-warm': el => {
+    const s = data.active.entries[+el.dataset.i].sets[+el.dataset.j];
+    s.warm = !s.warm;
+    save(); render();
+  },
+  'fill-prev': el => {
+    const e = data.active.entries[+el.dataset.i];
+    const prev = history(e.exercise, data.active.id)[0];
+    if (!prev) return;
+    const hasData = e.sets.some(s => s.weight != null || s.reps != null);
+    if (hasData && !confirm('Nykyiset sarjat korvataan edellisen kerran arvoilla. Jatketaanko?')) return;
+    // pre = esitäytetty: jos sarjaa ei muokata tai kuitata, se poistetaan treeniä tallennettaessa
+    e.sets = prev.sets.map(s => ({ weight: s.weight, reps: s.reps, rpe: null, warm: !!s.warm, pre: true }));
+    save(); render();
+  },
+  'done-set': el => {
+    const e = data.active.entries[+el.dataset.i];
+    const s = e.sets[+el.dataset.j];
+    s.done = !s.done;
+    delete s.pre;
+    el.classList.toggle('on', s.done);
+    el.closest('.set').classList.remove('pre');
+    save();
+    if (s.done) startRest(restSeconds(e.exercise, s.warm));
+    else stopRest();
   },
   'remove-set': el => {
     const e = data.active.entries[+el.dataset.i];
@@ -417,7 +543,9 @@ const actions = {
   'finish': () => {
     const w = data.active;
     // Poistetaan tyhjät sarjat ja liikkeet, joissa ei ole yhtään sarjaa
-    w.entries.forEach(e => e.sets = e.sets.filter(s => s.weight != null || s.reps != null));
+    // (myös esitäytetyt sarjat, joita ei ole muokattu tai kuitattu)
+    w.entries.forEach(e => e.sets = e.sets.filter(s => !s.pre && (s.weight != null || s.reps != null)));
+    stopRest();
     w.entries = w.entries.filter(e => e.sets.length);
     if (!w.entries.length) { alert('Treenissä ei ole yhtään täytettyä sarjaa.'); return; }
     data.workouts.push(w);
@@ -427,8 +555,10 @@ const actions = {
   },
   'cancel-workout': () => {
     if (!confirm('Hylätäänkö koko treeni? Tietoja ei tallenneta.')) return;
-    data.active = null; save(); go('home');
+    data.active = null; stopRest(); save(); go('home');
   },
+  'rest-add': el => { if (rest) { rest.end += +el.dataset.s * 1000; tickRest(); } },
+  'rest-stop': () => stopRest(),
   'save-as-template': () => {
     const name = prompt('Pohjan nimi:', data.active.name);
     if (!name) return;
@@ -517,7 +647,12 @@ document.addEventListener('input', ev => {
     t[el.dataset.f === 'tmin' ? 'min' : 'max'] = num(el.value);
     if (!t.min && !t.max) delete data.targets[e.exercise];
     document.getElementById('coach-' + i).innerHTML = coachHTML(coach(e.exercise, data.active.id));
-  } else e.sets[+el.dataset.j][el.dataset.f] = num(el.value);
+  } else {
+    const s = e.sets[+el.dataset.j];
+    s[el.dataset.f] = num(el.value);
+    delete s.pre; // muokattu sarja ei ole enää pelkkä esitäyttö
+    el.closest('.set').classList.remove('pre');
+  }
   document.getElementById('live-' + i).textContent = liveNote(e);
   save();
 });
